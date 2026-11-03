@@ -70,6 +70,15 @@ async function run(): Promise<void> {
         throw new RangeError(
             "The junctions parameter must be fine, coarse or none.",
         );
+    const edgeHeights = parameters.get("heights") ?? "coarsest";
+    if (
+        edgeHeights !== "coarsest" &&
+        edgeHeights !== "finest" &&
+        edgeHeights !== "average"
+    )
+        throw new RangeError(
+            "The heights parameter must be coarsest, finest or average.",
+        );
     const verticalScaleInput = requiredElement(
         "vertical-scale",
         HTMLInputElement,
@@ -141,6 +150,7 @@ async function run(): Promise<void> {
     const pipeline = new BabylonGeodesicGridPipeline(scene, tileLabels, {
         wireframe: !solidRendering,
         junctions,
+        edgeHeights,
         ...(dem
             ? {
                   elevation: {

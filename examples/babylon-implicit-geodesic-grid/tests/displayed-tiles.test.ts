@@ -65,4 +65,28 @@ describe("DisplayedTiles", () => {
 
         expect(tiles.has({ lod: 5, x: 1, y: 1 })).toBe(true);
     });
+
+    it("lists the displayed tiles touching a point, from the coarsest level", () => {
+        // 4/4/4 covers [0.25, 0.3125]; its east neighbour is split into 5/10/8 and 5/10/9.
+        const tiles = displayed("4/4/4", "5/10/8", "5/10/9");
+
+        // On the shared edge, at the corner of the two finer tiles.
+        expect(tiles.touching(0.3125, 0.28125)).toEqual([
+            { lod: 4, x: 4, y: 4 },
+            { lod: 5, x: 10, y: 8 },
+        ]);
+        // Inside the coarse tile only.
+        expect(tiles.touching(0.27, 0.27)).toEqual([{ lod: 4, x: 4, y: 4 }]);
+
+        tiles.delete({ lod: 4, x: 4, y: 4 });
+        expect(tiles.touching(0.3125, 0.28125)).toEqual([
+            { lod: 5, x: 10, y: 8 },
+        ]);
+    });
+
+    it("finds tiles touching a point across the antimeridian", () => {
+        const tiles = displayed("2/3/1");
+
+        expect(tiles.touching(0, 0.3)).toEqual([{ lod: 2, x: 3, y: 1 }]);
+    });
 });

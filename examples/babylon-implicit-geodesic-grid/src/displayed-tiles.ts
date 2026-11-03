@@ -40,19 +40,66 @@ function key(address: ITileAddress): string {
 /** Tracks the presented tiles of a quadtree to find the level displayed across each tile edge. */
 export class DisplayedTiles {
     private readonly counts = new Map<string, number>();
+    private readonly levelCounts = new Map<number, number>();
+    private sortedLevels: number[] = [];
 
     public add(address: ITileAddress): void {
         this.counts.set(key(address), (this.counts.get(key(address)) ?? 0) + 1);
+        this.countLevel(address.lod, 1);
     }
 
     public delete(address: ITileAddress): void {
-        const count = (this.counts.get(key(address)) ?? 0) - 1;
+        if (!this.counts.has(key(address))) return;
+        const count = this.counts.get(key(address))! - 1;
         if (count > 0) this.counts.set(key(address), count);
         else this.counts.delete(key(address));
+        this.countLevel(address.lod, -1);
     }
 
     public has(address: ITileAddress): boolean {
         return this.counts.has(key(address));
+    }
+
+    /**
+     * Displayed tiles whose closed extent contains a point, one per level, from
+     * the coarsest. The point is normalized over the pyramid: `x` eastward and
+     * `y` southward in `[0, 1]`. Columns wrap around the antimeridian.
+     */
+    public touching(x: number, y: number): ITileAddress[] {
+        const result: ITileAddress[] = [];
+        for (const lod of this.sortedLevels) {
+            const count = 2 ** lod;
+            const column = x * count;
+            const row = y * count;
+            // A point on a tile boundary touches the tiles on both sides.
+            const columns = Number.isInteger(column)
+                ? [column - 1, column]
+                : [Math.floor(column)];
+            const rows = Number.isInteger(row)
+                ? [row - 1, row]
+                : [Math.floor(row)];
+            const found = rows
+                .filter((candidate) => candidate >= 0 && candidate < count)
+                .flatMap((candidateRow) =>
+                    columns.map((candidate) => ({
+                        lod,
+                        x: ((candidate % count) + count) % count,
+                        y: candidateRow,
+                    })),
+                )
+                .find((address) => this.has(address));
+            if (found) result.push(found);
+        }
+        return result;
+    }
+
+    private countLevel(lod: number, delta: number): void {
+        const count = (this.levelCounts.get(lod) ?? 0) + delta;
+        if (count > 0) this.levelCounts.set(lod, count);
+        else this.levelCounts.delete(lod);
+        this.sortedLevels = [...this.levelCounts.keys()].sort(
+            (left, right) => left - right,
+        );
     }
 
     /**

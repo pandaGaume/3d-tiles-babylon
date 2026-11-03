@@ -81,6 +81,8 @@ export interface IBabylonGeodesicGridHandle {
     heightAt: HeightSampler | undefined;
     /** Neighbour levels the current grid connects to. */
     lods: GridEdgeLods;
+    /** Levels of detail displayed along the edges when the grid was built. */
+    edgeLevels: string;
 }
 
 /** Elevation applied to grid vertices, one DEM tile per grid tile. */
@@ -100,7 +102,20 @@ export interface IBabylonGeodesicGridPipelineOptions {
     elevation?: IGridElevationOptions;
     /** Tile adapting its edge between two levels of detail. Defaults to `fine`. */
     junctions?: JunctionPolicy;
+    /** Heights of the edge vertices shared with other levels. Defaults to `coarsest`. */
+    edgeHeights?: EdgeHeightPolicy;
 }
+
+/**
+ * Height of a tile edge vertex touched by tiles of several levels of detail.
+ * Every tile touching the vertex computes the same height from the stitched
+ * DEM of these levels, so their edges meet:
+ *
+ * - `coarsest`: the DEM of the coarsest level, which keeps coarse tiles intact;
+ * - `finest`: the DEM of the finest level, which keeps the finest detail;
+ * - `average`: the mean over the distinct DEM levels.
+ */
+export type EdgeHeightPolicy = "coarsest" | "finest" | "average";
 
 /** Height in metres at normalized tile coordinates, `u` west to east and `v` north to south. */
 type HeightSampler = (u: number, v: number) => number;
@@ -219,6 +234,8 @@ export class BabylonGeodesicGridPipeline
     private readonly topologies: JunctionGridTopologyCache;
     private readonly displayed = new DisplayedTiles();
     private readonly junctions: JunctionPolicy;
+    private readonly edgeHeights: EdgeHeightPolicy;
+    private readonly subdivisions: number;
     private junctionsDirty = false;
     private readonly labelLayer: HTMLElement;
     private readonly scene: Scene;
@@ -246,6 +263,8 @@ export class BabylonGeodesicGridPipeline
         this.elevation = options.elevation;
         this.verticalScale = options.elevation?.verticalScale ?? 1;
         this.junctions = options.junctions ?? "fine";
+        this.edgeHeights = options.edgeHeights ?? "coarsest";
+        this.subdivisions = subdivisions;
         this.topologies = new JunctionGridTopologyCache(subdivisions);
     }
 
@@ -364,7 +383,7 @@ export class BabylonGeodesicGridPipeline
      * Reconnects the edges of the presented grids to the levels of detail
      * displayed next to them. Call once per frame, before rendering; it only
      * works after a presentation change, and only rebuilds the grids whose
-     * neighbour levels changed.
+     * neighbour levels changed, in their topology or in their edge heights.
      */
     public updateJunctions(): void {
         if (!this.junctionsDirty) return;
@@ -375,8 +394,16 @@ export class BabylonGeodesicGridPipeline
                 handle.identity,
                 this.junctions,
             );
-            if (edgeLodsKey(lods) !== edgeLodsKey(handle.lods))
+            const edgeLevels = handle.heightAt
+                ? this.edgeLevelsSignature(handle.identity)
+                : "";
+            if (
+                edgeLodsKey(lods) !== edgeLodsKey(handle.lods) ||
+                edgeLevels !== handle.edgeLevels
+            ) {
+                handle.edgeLevels = edgeLevels;
                 this.applyGeometry(handle, lods);
+            }
         }
     }
 
@@ -623,6 +650,7 @@ export class BabylonGeodesicGridPipeline
             region,
             heightAt,
             lods: SAME_EDGE_LODS,
+            edgeLevels: "",
         };
         // Neighbours are unknown until presentation; updateJunctions adapts the edges then.
         this.applyGeometry(handle, SAME_EDGE_LODS);
@@ -631,15 +659,102 @@ export class BabylonGeodesicGridPipeline
         return handle;
     }
 
+    /**
+     * Height of a point on the edge of a tile, shared by every tile displayed
+     * at that point. Each displayed level samples the stitched DEM of the tile
+     * that displays it, so tiles of the same level read identical samples.
+     * `NaN` when no DEM is available.
+     */
+    private edgeHeight(tile: ITileAddress, u: number, v: number): number {
+        const count = 2 ** tile.lod;
+        const x = (tile.x + u) / count;
+        const y = (tile.y + v) / count;
+        const touching = this.displayed.touching(x, y);
+        if (touching.length === 0 || !this.elevation) return Number.NaN;
+
+        const maximumDemLod = this.elevation.dem.source.metrics.maxLOD;
+        const heightAtLevel = (displayed: ITileAddress): number => {
+            const demLod = Math.min(displayed.lod, maximumDemLod);
+            const demTile = ancestorTileAddress(
+                displayed,
+                displayed.lod - demLod,
+            );
+            const grid = this.stitchedDem.get(demTile);
+            if (!grid) return Number.NaN;
+            const demCount = 2 ** demLod;
+            let demU = x * demCount - demTile.x;
+            // The displayed tile may touch the point across the antimeridian.
+            if (demU > 1) demU -= demCount;
+            else if (demU < 0) demU += demCount;
+            return sampleHeightBilinear(
+                grid,
+                demU,
+                y * demCount - demTile.y,
+                "point",
+            );
+        };
+        if (this.edgeHeights === "coarsest") return heightAtLevel(touching[0]!);
+        if (this.edgeHeights === "finest")
+            return heightAtLevel(touching[touching.length - 1]!);
+
+        // Levels beyond the DEM maximum level share its DEM: average over distinct DEM levels.
+        const byDemLevel = new Map<number, number>();
+        for (const displayed of touching) {
+            const demLod = Math.min(displayed.lod, maximumDemLod);
+            if (!byDemLevel.has(demLod))
+                byDemLevel.set(demLod, heightAtLevel(displayed));
+        }
+        const heights = [...byDemLevel.values()].filter(
+            (height) => !Number.isNaN(height),
+        );
+        return heights.length === 0
+            ? Number.NaN
+            : heights.reduce((sum, height) => sum + height, 0) / heights.length;
+    }
+
+    /** Levels of detail displayed at the points of the tile edges, to detect when edge heights change. */
+    private edgeLevelsSignature(tile: ITileAddress): string {
+        const count = 2 ** tile.lod;
+        const steps = 2 * this.subdivisions;
+        const levels: string[] = [];
+        for (let step = 0; step < steps; step++) {
+            const t = step / steps;
+            // Clockwise from the north-west corner, half a cell apart.
+            for (const [u, v] of [
+                [t, 0],
+                [1, t],
+                [1 - t, 1],
+                [0, 1 - t],
+            ] as const) {
+                levels.push(
+                    this.displayed
+                        .touching((tile.x + u) / count, (tile.y + v) / count)
+                        .map((displayed) => displayed.lod)
+                        .join(","),
+                );
+            }
+        }
+        return levels.join(";");
+    }
+
     /** Builds the grid of a tile for the given neighbour levels and uploads it to its mesh. */
     private applyGeometry(
         handle: IBabylonGeodesicGridHandle,
         lods: GridEdgeLods,
     ): void {
         const topology = this.topologies.get(lods);
+        const ownHeight = handle.heightAt;
+        const heightAt: HeightSampler | undefined = ownHeight
+            ? (u, v) => {
+                  if (u !== 0 && u !== 1 && v !== 0 && v !== 1)
+                      return ownHeight(u, v);
+                  const shared = this.edgeHeight(handle.identity, u, v);
+                  return Number.isNaN(shared) ? ownHeight(u, v) : shared;
+              }
+            : undefined;
         // Rows follow Web Mercator so that vertices line up with DEM pixels.
-        const elevated = handle.heightAt
-            ? projectElevatedGrid(topology, handle.region, handle.heightAt)
+        const elevated = heightAt
+            ? projectElevatedGrid(topology, handle.region, heightAt)
             : undefined;
         const geometry = elevated
             ? {
