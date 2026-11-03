@@ -21,16 +21,18 @@ import {
 } from "@spacexr/3d-tiles-runtime";
 import { GeodeticSystem } from "@spacexr/geodesy";
 import {
+    ChildHeightRanges,
+    DemPyramid,
     WorkerDemDecoder,
     createMapzenTerrariumSource,
+    webDemTileLoader,
     type IDemWorkerEndpoint,
-} from "@spacexr/tiles";
+} from "@spacexr/dem";
 
 import {
     BabylonGeodesicGridPipeline,
     type IBabylonGeodesicGridHandle,
 } from "./babylon-geodesic-grid-pipeline";
-import { ChildHeightRanges } from "./child-height-ranges";
 import DemDecoderWorker from "./dem-decoder.worker?worker";
 import { createGeodesicGridSource } from "./grid-source";
 import { clearMonitorPanel, renderMonitorPanel } from "./monitor-panel";
@@ -154,26 +156,33 @@ async function run(): Promise<void> {
         ...(dem
             ? {
                   elevation: {
-                      dem,
-                      // PNG and elevation decoding take about 60 ms per tile; workers keep it off the render loop.
-                      demDecoder: new WorkerDemDecoder(
-                          Array.from(
-                              {
-                                  length: Math.max(
-                                      1,
-                                      Math.min(
-                                          4,
-                                          (navigator.hardwareConcurrency || 2) -
+                      pyramid: new DemPyramid({
+                          load: webDemTileLoader(
+                              dem,
+                              // PNG and elevation decoding take about 60 ms per tile; workers keep it off the render loop.
+                              new WorkerDemDecoder(
+                                  Array.from(
+                                      {
+                                          length: Math.max(
                                               1,
-                                      ),
+                                              Math.min(
+                                                  4,
+                                                  (navigator.hardwareConcurrency ||
+                                                      2) - 1,
+                                              ),
+                                          ),
+                                      },
+                                      () =>
+                                          new DemDecoderWorker() as unknown as IDemWorkerEndpoint,
                                   ),
-                              },
-                              () =>
-                                  new DemDecoderWorker() as unknown as IDemWorkerEndpoint,
+                              ),
                           ),
-                      ),
+                          maxLOD: dem.source.metrics.maxLOD,
+                          // The grid covers every longitude.
+                          wrapX: true,
+                          childHeightRanges,
+                      }),
                       verticalScale,
-                      childHeightRanges,
                   },
               }
             : {}),
@@ -201,7 +210,7 @@ async function run(): Promise<void> {
         presentation: pipeline,
     };
     const runtime = new TileRuntime({
-        id: "implicit-geodesic-grid",
+        id: "implicit-grid-mapzen",
         uri: "memory://geodesic-grid/tileset.json",
         adapter,
         maxScreenSpaceError: 10,
@@ -277,5 +286,5 @@ void run().catch((error: unknown) => {
             error instanceof Error
                 ? error.message
                 : "The pipeline example could not start.";
-    console.error("Babylon implicit geodesic grid example failed", error);
+    console.error("Babylon implicit grid Mapzen example failed", error);
 });

@@ -1,8 +1,8 @@
 {
-    "name": "@spacexr/example-babylon-implicit-geodesic-grid",
+    "name": "@spacexr/example-babylon-implicit-grid-mapzen",
     "version": "0.1.0",
     "private": true,
-    "description": "Babylon.js proof of the renderer-neutral 3D Tiles pipeline with ellipsoid-projected geodesic grids.",
+    "description": "Babylon.js proof of the renderer-neutral 3D Tiles pipeline: an implicit Web Mercator quadtree of ellipsoid-projected grids elevated with Mapzen Terrarium.",
     "type": "module",
     "license": "Apache-2.0",
     "engines": {
@@ -25,6 +25,7 @@
         "@spacexr/3d-tiles-babylon": "0.1.0",
         "@spacexr/3d-tiles-core": "0.1.0",
         "@spacexr/3d-tiles-runtime": "0.1.0",
+        "@spacexr/dem": "0.1.0",
         "@spacexr/geodesy": "0.4.0",
         "@spacexr/grid": "0.1.0",
         "@spacexr/tiles": "0.1.0"

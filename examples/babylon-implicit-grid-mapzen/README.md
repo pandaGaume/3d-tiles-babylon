@@ -1,4 +1,4 @@
-# Babylon implicit geodesic grid
+# Babylon implicit grid, Mapzen
 
 This example is the integration proof for the renderer-neutral runtime pipeline.
 
@@ -24,7 +24,7 @@ No API key or `.env` file is required.
 
 ## Elevation
 
-Grid vertices are displaced with Mapzen Terrarium heights from `@spacexr/tiles`, one DEM tile per grid tile. Beyond level 15, the deepest Terrarium level, a grid samples the matching sub-area of its level 15 ancestor, kept in a shared cache.
+Grid vertices are displaced with Mapzen Terrarium heights from a `DemPyramid` of `@spacexr/dem`, one DEM tile per grid tile. Beyond level 15, the deepest Terrarium level, a grid samples the matching sub-area of its level 15 ancestor, kept in the shared cache of the pyramid.
 
 DEM tiles are stitched with the first column, row and sample of their east, south and south-east neighbours, as in SpaceXR, and sampled in point registration: neighbouring grids of the same level read identical heights on their shared edge. Where tiles of several levels meet, every edge vertex takes the height chosen by the `heights` parameter, computed identically by every tile touching it. The runtime keeps neighbouring tiles within one level of detail (2:1 quadtree balance), and shaded rendering uses normals of the stitched DEM surface, so tile edges show neither cracks nor shading seams.
 

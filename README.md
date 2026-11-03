@@ -10,9 +10,9 @@ The runtime owns traversal, level of detail, loading and caching. This repositor
 ## Repository layout
 
 ```text
-packages/core/                           @spacexr/3d-tiles-babylon
-examples/babylon-google-3d-tiles/        Google Photorealistic 3D Tiles
-examples/babylon-implicit-geodesic-grid/ Implicit WebMercator quadtree with Mapzen elevation
+packages/core/                         @spacexr/3d-tiles-babylon
+examples/babylon-google-3d-tiles/      Google Photorealistic 3D Tiles
+examples/babylon-implicit-grid-mapzen/ Implicit WebMercator quadtree with Mapzen elevation
 ```
 
 ## Usage

@@ -30,6 +30,8 @@ export default defineConfig({
             "@spacexr/3d-tiles-core",
             "@spacexr/3d-tiles-runtime",
             "@spacexr/tiles",
+            "@spacexr/raster",
+            "@spacexr/dem",
             "@spacexr/grid",
         ],
         esbuildOptions: { target: "es2022" },

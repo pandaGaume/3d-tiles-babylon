@@ -29,21 +29,12 @@ import {
     type GridEdgeLods,
 } from "@spacexr/grid";
 import {
-    ancestorTileAddress,
-    heightRangeInArea,
-    loadDemTile,
-    sampleHeightBilinear,
-    StitchedHeightGrids,
-    TileNeighbor,
-    tileNeighborAddress,
-    type DemInfos,
-    type IDemTileSource,
+    selectSurfaceLevels,
+    webMercatorSurfaceNormal,
+    type DemPyramid,
     type IHeightRange,
-    type IDemDecoder,
-    type QuadrantHeightRanges,
-} from "@spacexr/tiles";
-
-import type { ChildHeightRanges } from "./child-height-ranges";
+    type SurfaceLevelPolicy,
+} from "@spacexr/dem";
 import { DisplayedTiles, type JunctionPolicy } from "./displayed-tiles";
 import {
     composeElevatedPositions,
@@ -53,8 +44,6 @@ import {
 } from "./geodesic-grid-geometry";
 
 const GRID_SUBDIVISIONS = 16;
-/** DEM tiles kept in memory, so that grids deeper than the DEM reuse their common ancestor. */
-const DEM_CACHE_ENTRIES = 256;
 const LOD_COLORS = [
     "#2f80ed",
     "#00c2ff",
@@ -88,13 +77,10 @@ export interface IBabylonGeodesicGridHandle {
 
 /** Elevation applied to grid vertices, one DEM tile per grid tile. */
 export interface IGridElevationOptions {
-    dem: IDemTileSource;
-    /** Decodes DEM tiles, preferably in workers. */
-    demDecoder: IDemDecoder;
+    /** DEM surface, which also records the ranges prepared for child tiles. */
+    pyramid: DemPyramid;
     /** Initial vertical scale applied to every height. Defaults to 1. */
     verticalScale?: number;
-    /** Receives the quadrant ranges of each loaded tile, prepared for its four children. */
-    childHeightRanges?: ChildHeightRanges;
 }
 
 export interface IBabylonGeodesicGridPipelineOptions {
@@ -110,25 +96,12 @@ export interface IBabylonGeodesicGridPipelineOptions {
 /**
  * Height of a tile edge vertex touched by tiles of several levels of detail.
  * Every tile touching the vertex computes the same height from the stitched
- * DEM of these levels, so their edges meet:
- *
- * - `coarsest`: the DEM of the coarsest level, which keeps coarse tiles intact;
- * - `finest`: the DEM of the finest level, which keeps the finest detail;
- * - `average`: the mean over the distinct DEM levels.
+ * DEM of the levels the policy selects, so their edges meet.
  */
-export type EdgeHeightPolicy = "coarsest" | "finest" | "average";
+export type EdgeHeightPolicy = SurfaceLevelPolicy;
 
 /** Height in metres at normalized tile coordinates, `u` west to east and `v` north to south. */
 type HeightSampler = (u: number, v: number) => number;
-
-/** Unscaled heights of one grid tile and the ranges measured with them. */
-interface ITileHeights {
-    sampler: HeightSampler;
-    /** Range of the tile. */
-    range: IHeightRange;
-    /** Ranges of the four children, in north-west, north-east, south-west, south-east order. */
-    quadrants: QuadrantHeightRanges;
-}
 
 /** Region whose height interval is a measured range multiplied by a vertical scale. */
 function regionWithHeights(
@@ -242,12 +215,6 @@ export class BabylonGeodesicGridPipeline
     private readonly scene: Scene;
     private readonly wireframe: boolean;
     private readonly elevation: IGridElevationOptions | undefined;
-    /** DEM tiles with the extra column and row of their east, south and south-east neighbours. */
-    private readonly stitchedDem = new StitchedHeightGrids({ wrapX: true });
-    private readonly demCache = new Map<
-        string,
-        Promise<DemInfos | undefined>
-    >();
     private verticalScale: number;
     private createdHandleCount = 0;
     private releasedHandleCount = 0;
@@ -282,7 +249,9 @@ export class BabylonGeodesicGridPipeline
                 continue;
             }
             try {
-                const heights = await this.loadHeights(tileIdentity(context));
+                const heights = await this.elevation?.pyramid.tileHeights(
+                    tileIdentity(context),
+                );
                 if (context.signal.aborted) {
                     await context.readiness.cancelled(content.id);
                     continue;
@@ -507,115 +476,6 @@ export class BabylonGeodesicGridPipeline
         }
     }
 
-    /**
-     * Loads the heights of a grid tile with its range and the ranges of its
-     * four children, which are recorded for the next zoom level.
-     *
-     * Beyond the DEM maximum level, the ancestor DEM tile is sampled on the
-     * matching sub-area (overzoom), and ranges cover every DEM sample that can
-     * influence a bilinear sample in the area. Returns `undefined` when
-     * elevation is disabled or the DEM tile does not exist.
-     *
-     * The DEM tile is stitched with its east, south and south-east neighbours
-     * and sampled in `point` registration, so that neighbouring grids read the
-     * same samples on their shared edge.
-     */
-    private async loadHeights(
-        identity: ITileAddress,
-    ): Promise<ITileHeights | undefined> {
-        if (!this.elevation) return undefined;
-        const { dem } = this.elevation;
-        const demLod = Math.min(identity.lod, dem.source.metrics.maxLOD);
-        const levels = identity.lod - demLod;
-        const ancestor = ancestorTileAddress(identity, levels);
-        const neighbors = [TileNeighbor.E, TileNeighbor.S, TileNeighbor.SE]
-            .map((position) =>
-                tileNeighborAddress(ancestor, position, { wrapX: true }),
-            )
-            .filter((address) => address !== undefined);
-        const [demGrid] = await Promise.all([
-            this.cachedDem(ancestor),
-            // A missing neighbour only leaves the repeated edge of the tile.
-            ...neighbors.map((address) =>
-                this.cachedDem(address).catch(() => undefined),
-            ),
-        ]);
-        if (!demGrid) return undefined;
-        if (!this.stitchedDem.has(ancestor))
-            this.stitchedDem.add(ancestor, demGrid);
-        const grid = this.stitchedDem.get(ancestor)!;
-
-        const scale = 2 ** levels;
-        const west = (identity.x - ancestor.x * scale) / scale;
-        const north = (identity.y - ancestor.y * scale) / scale;
-        const size = 1 / scale;
-        const half = size / 2;
-        const rangeOf = (
-            areaWest: number,
-            areaNorth: number,
-            areaSize: number,
-        ) =>
-            heightRangeInArea(
-                grid,
-                areaWest,
-                areaNorth,
-                areaWest + areaSize,
-                areaNorth + areaSize,
-                "point",
-            );
-        const range = rangeOf(west, north, size);
-        const quadrants: QuadrantHeightRanges = [
-            rangeOf(west, north, half),
-            rangeOf(west + half, north, half),
-            rangeOf(west, north + half, half),
-            rangeOf(west + half, north + half, half),
-        ];
-        this.elevation.childHeightRanges?.recordChildren(identity, quadrants);
-        return {
-            sampler: (u, v) =>
-                sampleHeightBilinear(
-                    grid,
-                    west + u * size,
-                    north + v * size,
-                    "point",
-                ),
-            range,
-            quadrants,
-        };
-    }
-
-    /**
-     * Loads a DEM tile once and shares it between grids. The request is not
-     * bound to one activation signal, because other grids may await it.
-     */
-    private cachedDem(address: ITileAddress): Promise<DemInfos | undefined> {
-        const { dem, demDecoder } = this.elevation!;
-        const key = `${address.lod}/${address.x}/${address.y}`;
-        const cached = this.demCache.get(key);
-        if (cached) {
-            this.demCache.delete(key);
-            this.demCache.set(key, cached);
-            return cached;
-        }
-        const loading = loadDemTile(dem, address, demDecoder).then((tile) => {
-            // Stitching completes the neighbours already loaded as well.
-            if (tile?.content && this.demCache.has(key))
-                this.stitchedDem.add(address, tile.content);
-            return tile?.content;
-        });
-        loading.catch(() => this.demCache.delete(key));
-        this.demCache.set(key, loading);
-        if (this.demCache.size > DEM_CACHE_ENTRIES) {
-            const oldest = this.demCache.keys().next().value;
-            if (oldest !== undefined) {
-                this.demCache.delete(oldest);
-                const [lod, x, y] = oldest.split("/").map(Number);
-                this.stitchedDem.delete({ lod: lod!, x: x!, y: y! });
-            }
-        }
-        return loading;
-    }
-
     private createHandle(
         context: ITileActivationContext<
             IEcefSpatialState,
@@ -661,40 +521,6 @@ export class BabylonGeodesicGridPipeline
     }
 
     /**
-     * DEM height at a point of the pyramid, normalized `x` eastward and `y`
-     * southward, from a loaded stitched DEM tile of the level containing it.
-     * Stitched tiles share their edge samples, so either side of a tile edge
-     * gives the same value. `NaN` when no such DEM tile is loaded.
-     */
-    private demHeight(x: number, y: number, demLod: number): number {
-        const count = 2 ** demLod;
-        const column = x * count;
-        const row = y * count;
-        const columns = Number.isInteger(column)
-            ? [column, column - 1]
-            : [Math.floor(column)];
-        const rows = Number.isInteger(row) ? [row, row - 1] : [Math.floor(row)];
-        for (const tileRow of rows) {
-            if (tileRow < 0 || tileRow >= count) continue;
-            for (const tileColumn of columns) {
-                const grid = this.stitchedDem.get({
-                    lod: demLod,
-                    x: ((tileColumn % count) + count) % count,
-                    y: tileRow,
-                });
-                if (grid)
-                    return sampleHeightBilinear(
-                        grid,
-                        column - tileColumn,
-                        row - tileRow,
-                        "point",
-                    );
-            }
-        }
-        return Number.NaN;
-    }
-
-    /**
      * Displayed levels whose DEM surface a vertex follows: the level of its tile
      * inside the tile; on its edges, the levels chosen by the edge height policy
      * among the tiles displayed at that point, so that every tile touching the
@@ -707,84 +533,7 @@ export class BabylonGeodesicGridPipeline
             .touching((tile.x + u) / count, (tile.y + v) / count)
             .map((displayed) => displayed.lod);
         if (levels.length === 0) return [tile.lod];
-        if (this.edgeHeights === "coarsest") return [levels[0]!];
-        if (this.edgeHeights === "finest") return [levels[levels.length - 1]!];
-        return levels;
-    }
-
-    /** DEM level sampled for a displayed level: overzoomed levels share the deepest DEM. */
-    private demLevel(lod: number): number {
-        return Math.min(lod, this.elevation!.dem.source.metrics.maxLOD);
-    }
-
-    /** Mean DEM height over levels, ignoring missing samples. */
-    private surfaceHeight(
-        x: number,
-        y: number,
-        levels: readonly number[],
-    ): number {
-        let sum = 0;
-        let count = 0;
-        for (const level of levels) {
-            const height = this.demHeight(x, y, this.demLevel(level));
-            if (Number.isNaN(height)) continue;
-            sum += height;
-            count++;
-        }
-        return count === 0 ? Number.NaN : sum / count;
-    }
-
-    /**
-     * Height gradient of the DEM surface, in metres per normalized pyramid
-     * unit along `x` and `y`, from central differences one grid cell apart.
-     * Missing neighbours fall back to one-sided differences.
-     */
-    private surfaceGradient(
-        x: number,
-        y: number,
-        levels: readonly number[],
-    ): [number, number] | undefined {
-        let gradientX = 0;
-        let gradientY = 0;
-        let count = 0;
-        const difference = (
-            before: number,
-            center: number,
-            after: number,
-            step: number,
-        ): number | undefined => {
-            if (!Number.isNaN(before) && !Number.isNaN(after))
-                return (after - before) / (2 * step);
-            if (!Number.isNaN(after) && !Number.isNaN(center))
-                return (after - center) / step;
-            if (!Number.isNaN(before) && !Number.isNaN(center))
-                return (center - before) / step;
-            return undefined;
-        };
-        for (const level of levels) {
-            // One grid cell at the displayed level: the samples fall on the neighbouring vertices, so normals
-            // describe the mesh surface rather than DEM detail the triangles cannot show.
-            const step = 1 / (this.subdivisions * 2 ** level);
-            const demLod = this.demLevel(level);
-            const center = this.demHeight(x, y, demLod);
-            const alongX = difference(
-                this.demHeight(x - step, y, demLod),
-                center,
-                this.demHeight(x + step, y, demLod),
-                step,
-            );
-            const alongY = difference(
-                this.demHeight(x, y - step, demLod),
-                center,
-                this.demHeight(x, y + step, demLod),
-                step,
-            );
-            if (alongX === undefined || alongY === undefined) continue;
-            gradientX += alongX;
-            gradientY += alongY;
-            count++;
-        }
-        return count === 0 ? undefined : [gradientX / count, gradientY / count];
+        return [...selectSurfaceLevels(levels, this.edgeHeights)];
     }
 
     /**
@@ -802,8 +551,7 @@ export class BabylonGeodesicGridPipeline
         VertexData.ComputeNormals(positions, elevated.indices, normals);
         const { lod, x: column, y: row } = handle.identity;
         const count = 2 ** lod;
-        const circumference =
-            2 * Math.PI * GeodeticSystem.WGS84.ellipsoid.semiMajorAxis;
+        const pyramid = this.elevation!.pyramid;
         for (
             let vertex = 0;
             vertex < topology.coordinates.length / 2;
@@ -813,43 +561,37 @@ export class BabylonGeodesicGridPipeline
             const v = topology.coordinates[vertex * 2 + 1]!;
             const x = (column + u) / count;
             const y = (row + v) / count;
-            const gradient = this.surfaceGradient(
+            // One grid cell at the displayed level: the samples fall on the neighbouring vertices, so normals
+            // describe the mesh surface rather than DEM detail the triangles cannot show.
+            const gradient = pyramid.surfaceGradient(
                 x,
                 y,
                 this.surfaceLevels(handle.identity, u, v),
+                this.subdivisions,
             );
             if (!gradient) continue;
-            const upX = elevated.up[vertex * 3]!;
-            const upY = elevated.up[vertex * 3 + 1]!;
-            const upZ = elevated.up[vertex * 3 + 2]!;
-            const horizontal = Math.hypot(upX, upY);
-            if (horizontal === 0) continue;
-            // East and north of the local tangent plane; y grows southward on the map.
-            const [eastX, eastY] = [-upY / horizontal, upX / horizontal];
-            const [northX, northY, northZ] = [
-                -upZ * eastY,
-                upZ * eastX,
-                upX * eastY - upY * eastX,
-            ];
-            // Web Mercator is conformal: one normalized unit spans circumference * cos(latitude) on the ground.
-            const metres = circumference * horizontal;
-            const slopeEast = (gradient[0] * this.verticalScale) / metres;
-            const slopeNorth = (-gradient[1] * this.verticalScale) / metres;
-            const normalX = upX - slopeEast * eastX - slopeNorth * northX;
-            const normalY = upY - slopeEast * eastY - slopeNorth * northY;
-            const normalZ = upZ - slopeNorth * northZ;
+            const up = {
+                x: elevated.up[vertex * 3]!,
+                y: elevated.up[vertex * 3 + 1]!,
+                z: elevated.up[vertex * 3 + 2]!,
+            };
+            if (up.x === 0 && up.y === 0) continue;
+            const normal = webMercatorSurfaceNormal(
+                gradient,
+                up,
+                this.verticalScale,
+            );
             // Keep the orientation Babylon gives the mesh: its winding convention decides which side is lit.
             const meshSide =
-                normals[vertex * 3]! * normalX +
-                    normals[vertex * 3 + 1]! * normalY +
-                    normals[vertex * 3 + 2]! * normalZ <
+                normals[vertex * 3]! * normal.x +
+                    normals[vertex * 3 + 1]! * normal.y +
+                    normals[vertex * 3 + 2]! * normal.z <
                 0
                     ? -1
                     : 1;
-            const length = Math.hypot(normalX, normalY, normalZ) * meshSide;
-            normals[vertex * 3] = normalX / length;
-            normals[vertex * 3 + 1] = normalY / length;
-            normals[vertex * 3 + 2] = normalZ / length;
+            normals[vertex * 3] = normal.x * meshSide;
+            normals[vertex * 3 + 1] = normal.y * meshSide;
+            normals[vertex * 3 + 2] = normal.z * meshSide;
         }
         return normals;
     }
@@ -890,7 +632,7 @@ export class BabylonGeodesicGridPipeline
         const count = 2 ** lod;
         const heightAt: HeightSampler | undefined = ownHeight
             ? (u, v) => {
-                  const height = this.surfaceHeight(
+                  const height = this.elevation!.pyramid.surfaceHeight(
                       (column + u) / count,
                       (row + v) / count,
                       this.surfaceLevels(handle.identity, u, v),

@@ -25,8 +25,8 @@
         "lint:fix": "npm run lint:fix --workspaces --if-present",
         "format": "npm run format --workspaces --if-present",
         "format:fix": "npm run format:fix --workspaces --if-present",
-        "example:implicit-grid": "npm run dev --workspace @spacexr/example-babylon-implicit-geodesic-grid",
-        "example:implicit-grid:preview": "npm run preview --workspace @spacexr/example-babylon-implicit-geodesic-grid",
+        "example:implicit-grid": "npm run dev --workspace @spacexr/example-babylon-implicit-grid-mapzen",
+        "example:implicit-grid:preview": "npm run preview --workspace @spacexr/example-babylon-implicit-grid-mapzen",
         "example:google-3d-tiles": "npm run dev --workspace @spacexr/example-babylon-google-3d-tiles",
         "example:google-3d-tiles:preview": "npm run preview --workspace @spacexr/example-babylon-google-3d-tiles",
         "check": "npm run format && npm run lint && npm run typecheck && npm run test && npm run build"
@@ -34,7 +34,9 @@
     "dependencies": {
         "@spacexr/3d-tiles-core": "file:../3d-tiles-core/node/packages/core",
         "@spacexr/3d-tiles-runtime": "file:../3d-tiles-core/node/packages/runtime",
+        "@spacexr/dem": "file:../3d-tiles-core/node/packages/dem",
         "@spacexr/grid": "file:../3d-tiles-core/node/packages/grid",
+        "@spacexr/raster": "file:../3d-tiles-core/node/packages/raster",
         "@spacexr/tiles": "file:../3d-tiles-core/node/packages/tiles"
     }
 }

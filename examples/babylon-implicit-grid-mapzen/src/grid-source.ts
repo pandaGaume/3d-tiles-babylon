@@ -17,7 +17,7 @@ import {
     WebMercatorTileMetrics,
 } from "@spacexr/3d-tiles-runtime";
 
-import type { ChildHeightRanges } from "./child-height-ranges";
+import type { ChildHeightRanges } from "@spacexr/dem";
 
 export const TILE_METRICS = new WebMercatorTileMetrics({
     minLOD: 3,
