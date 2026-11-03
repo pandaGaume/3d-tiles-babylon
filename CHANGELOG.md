@@ -20,6 +20,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Changed
 
 - The Google example uses the split activation and presentation ports instead of the legacy content adapter, and detects external tilesets from the payload instead of the media type or `.json` extension.
+- The implicit geodesic grid example builds its grids with `@spacexr/grid`: alternating diagonals, and edges reconnected to the levels of detail displayed next to each tile whenever the presentation changes. The `junctions` URL parameter selects which tile adapts: `fine` (default), `coarse` or `none`.
+- The implicit geodesic grid example samples stitched DEM tiles in `point` registration, which removes the height cracks between grids of the same level.
+- The examples serve the packages linked from 3d-tiles-core without Vite pre-bundling, so that rebuilding core is picked up without clearing the Vite cache.
 
 ### Fixed
 

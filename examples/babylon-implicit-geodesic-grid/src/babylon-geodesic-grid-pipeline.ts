@@ -22,10 +22,19 @@ import {
 } from "@spacexr/3d-tiles-runtime";
 import { GeodeticSystem } from "@spacexr/geodesy";
 import {
+    JunctionGridTopologyCache,
+    SAME_EDGE_LODS,
+    edgeLodsKey,
+    type GridEdgeLods,
+} from "@spacexr/grid";
+import {
     ancestorTileAddress,
     heightRangeInArea,
     loadDemTile,
     sampleHeightBilinear,
+    StitchedHeightGrids,
+    TileNeighbor,
+    tileNeighborAddress,
     type DemInfos,
     type IDemTileSource,
     type IHeightRange,
@@ -34,11 +43,10 @@ import {
 } from "@spacexr/tiles";
 
 import type { ChildHeightRanges } from "./child-height-ranges";
+import { DisplayedTiles, type JunctionPolicy } from "./displayed-tiles";
 import {
     composeElevatedPositions,
-    createGridTopology,
     type IElevatedGridGeometry,
-    type IGridTopology,
     projectElevatedGrid,
     projectGridTopologyToEllipsoid,
 } from "./geodesic-grid-geometry";
@@ -68,6 +76,11 @@ export interface IBabylonGeodesicGridHandle {
     estimatedGpuBytes: number;
     /** Present when the grid carries DEM heights. */
     elevated: IElevatedGridGeometry | undefined;
+    region: readonly number[];
+    /** Unscaled heights of the tile, kept to rebuild the grid when its neighbours change. */
+    heightAt: HeightSampler | undefined;
+    /** Neighbour levels the current grid connects to. */
+    lods: GridEdgeLods;
 }
 
 /** Elevation applied to grid vertices, one DEM tile per grid tile. */
@@ -85,6 +98,8 @@ export interface IBabylonGeodesicGridPipelineOptions {
     wireframe?: boolean;
     /** Displaces vertices with DEM heights. Without it, grids lie on the region minimum height. */
     elevation?: IGridElevationOptions;
+    /** Tile adapting its edge between two levels of detail. Defaults to `fine`. */
+    junctions?: JunctionPolicy;
 }
 
 /** Height in metres at normalized tile coordinates, `u` west to east and `v` north to south. */
@@ -201,11 +216,16 @@ export class BabylonGeodesicGridPipeline
 {
     private readonly handles = new Set<IBabylonGeodesicGridHandle>();
     private readonly materialsByLod = new Map<number, StandardMaterial>();
-    private readonly topology: IGridTopology;
+    private readonly topologies: JunctionGridTopologyCache;
+    private readonly displayed = new DisplayedTiles();
+    private readonly junctions: JunctionPolicy;
+    private junctionsDirty = false;
     private readonly labelLayer: HTMLElement;
     private readonly scene: Scene;
     private readonly wireframe: boolean;
     private readonly elevation: IGridElevationOptions | undefined;
+    /** DEM tiles with the extra column and row of their east, south and south-east neighbours. */
+    private readonly stitchedDem = new StitchedHeightGrids({ wrapX: true });
     private readonly demCache = new Map<
         string,
         Promise<DemInfos | undefined>
@@ -225,7 +245,8 @@ export class BabylonGeodesicGridPipeline
         this.wireframe = options.wireframe ?? true;
         this.elevation = options.elevation;
         this.verticalScale = options.elevation?.verticalScale ?? 1;
-        this.topology = createGridTopology(subdivisions);
+        this.junctions = options.junctions ?? "fine";
+        this.topologies = new JunctionGridTopologyCache(subdivisions);
     }
 
     public async activate(
@@ -303,9 +324,12 @@ export class BabylonGeodesicGridPipeline
     ): void {
         for (const resource of context.resources) {
             resource.handle.metadataHandle = resource.metadataHandle;
+            if (!resource.handle.presented)
+                this.displayed.add(resource.handle.identity);
             resource.handle.presented = true;
             resource.handle.mesh.isVisible = true;
         }
+        this.junctionsDirty = true;
     }
 
     public hide(
@@ -316,10 +340,13 @@ export class BabylonGeodesicGridPipeline
         >,
     ): void {
         for (const resource of context.resources) {
+            if (resource.handle.presented)
+                this.displayed.delete(resource.handle.identity);
             resource.handle.presented = false;
             resource.handle.mesh.isVisible = false;
             resource.handle.label.style.display = "none";
         }
+        this.junctionsDirty = true;
     }
 
     public release(
@@ -331,6 +358,26 @@ export class BabylonGeodesicGridPipeline
     ): void {
         for (const resource of context.resources)
             this.disposeHandle(resource.handle);
+    }
+
+    /**
+     * Reconnects the edges of the presented grids to the levels of detail
+     * displayed next to them. Call once per frame, before rendering; it only
+     * works after a presentation change, and only rebuilds the grids whose
+     * neighbour levels changed.
+     */
+    public updateJunctions(): void {
+        if (!this.junctionsDirty) return;
+        this.junctionsDirty = false;
+        for (const handle of this.handles) {
+            if (!handle.presented) continue;
+            const lods = this.displayed.edgeLods(
+                handle.identity,
+                this.junctions,
+            );
+            if (edgeLodsKey(lods) !== edgeLodsKey(handle.lods))
+                this.applyGeometry(handle, lods);
+        }
     }
 
     /** Projects labels for the current presentation cut into screen space. */
@@ -440,6 +487,10 @@ export class BabylonGeodesicGridPipeline
      * matching sub-area (overzoom), and ranges cover every DEM sample that can
      * influence a bilinear sample in the area. Returns `undefined` when
      * elevation is disabled or the DEM tile does not exist.
+     *
+     * The DEM tile is stitched with its east, south and south-east neighbours
+     * and sampled in `point` registration, so that neighbouring grids read the
+     * same samples on their shared edge.
      */
     private async loadHeights(
         identity: ITileAddress,
@@ -449,61 +500,57 @@ export class BabylonGeodesicGridPipeline
         const demLod = Math.min(identity.lod, dem.source.metrics.maxLOD);
         const levels = identity.lod - demLod;
         const ancestor = ancestorTileAddress(identity, levels);
-        const grid = await this.cachedDem(ancestor);
-        if (!grid) return undefined;
+        const neighbors = [TileNeighbor.E, TileNeighbor.S, TileNeighbor.SE]
+            .map((position) =>
+                tileNeighborAddress(ancestor, position, { wrapX: true }),
+            )
+            .filter((address) => address !== undefined);
+        const [demGrid] = await Promise.all([
+            this.cachedDem(ancestor),
+            // A missing neighbour only leaves the repeated edge of the tile.
+            ...neighbors.map((address) =>
+                this.cachedDem(address).catch(() => undefined),
+            ),
+        ]);
+        if (!demGrid) return undefined;
+        if (!this.stitchedDem.has(ancestor))
+            this.stitchedDem.add(ancestor, demGrid);
+        const grid = this.stitchedDem.get(ancestor)!;
 
         const scale = 2 ** levels;
         const west = (identity.x - ancestor.x * scale) / scale;
         const north = (identity.y - ancestor.y * scale) / scale;
         const size = 1 / scale;
         const half = size / 2;
-        const range =
-            levels === 0
-                ? { minimum: grid.minimum, maximum: grid.maximum }
-                : heightRangeInArea(
-                      grid,
-                      west,
-                      north,
-                      west + size,
-                      north + size,
-                  );
-        const quadrants: QuadrantHeightRanges =
-            levels === 0
-                ? grid.quadrants
-                : [
-                      heightRangeInArea(
-                          grid,
-                          west,
-                          north,
-                          west + half,
-                          north + half,
-                      ),
-                      heightRangeInArea(
-                          grid,
-                          west + half,
-                          north,
-                          west + size,
-                          north + half,
-                      ),
-                      heightRangeInArea(
-                          grid,
-                          west,
-                          north + half,
-                          west + half,
-                          north + size,
-                      ),
-                      heightRangeInArea(
-                          grid,
-                          west + half,
-                          north + half,
-                          west + size,
-                          north + size,
-                      ),
-                  ];
+        const rangeOf = (
+            areaWest: number,
+            areaNorth: number,
+            areaSize: number,
+        ) =>
+            heightRangeInArea(
+                grid,
+                areaWest,
+                areaNorth,
+                areaWest + areaSize,
+                areaNorth + areaSize,
+                "point",
+            );
+        const range = rangeOf(west, north, size);
+        const quadrants: QuadrantHeightRanges = [
+            rangeOf(west, north, half),
+            rangeOf(west + half, north, half),
+            rangeOf(west, north + half, half),
+            rangeOf(west + half, north + half, half),
+        ];
         this.elevation.childHeightRanges?.recordChildren(identity, quadrants);
         return {
             sampler: (u, v) =>
-                sampleHeightBilinear(grid, west + u * size, north + v * size),
+                sampleHeightBilinear(
+                    grid,
+                    west + u * size,
+                    north + v * size,
+                    "point",
+                ),
             range,
             quadrants,
         };
@@ -522,14 +569,21 @@ export class BabylonGeodesicGridPipeline
             this.demCache.set(key, cached);
             return cached;
         }
-        const loading = loadDemTile(dem, address, demDecoder).then(
-            (tile) => tile?.content,
-        );
+        const loading = loadDemTile(dem, address, demDecoder).then((tile) => {
+            // Stitching completes the neighbours already loaded as well.
+            if (tile?.content && this.demCache.has(key))
+                this.stitchedDem.add(address, tile.content);
+            return tile?.content;
+        });
         loading.catch(() => this.demCache.delete(key));
         this.demCache.set(key, loading);
         if (this.demCache.size > DEM_CACHE_ENTRIES) {
             const oldest = this.demCache.keys().next().value;
-            if (oldest !== undefined) this.demCache.delete(oldest);
+            if (oldest !== undefined) {
+                this.demCache.delete(oldest);
+                const [lod, x, y] = oldest.split("/").map(Number);
+                this.stitchedDem.delete({ lod: lod!, x: x!, y: y! });
+            }
         }
         return loading;
     }
@@ -545,9 +599,47 @@ export class BabylonGeodesicGridPipeline
     ): IBabylonGeodesicGridHandle {
         const region = tileRegion(context);
         const identity = tileIdentity(context);
+        const mesh = new Mesh(`geodesic-grid-${contentId}`, this.scene);
+        mesh.material = this.materialForLod(identity.lod);
+        mesh.isVisible = false;
+        mesh.alwaysSelectAsActiveMesh = true;
+
+        const label = this.labelLayer.ownerDocument.createElement("span");
+        label.className = "tile-label";
+        label.textContent = `X ${identity.x}  Y ${identity.y}  LOD ${identity.lod}`;
+        label.style.setProperty("--tile-color", lodColor(identity.lod));
+        this.labelLayer.append(label);
+
+        const handle: IBabylonGeodesicGridHandle = {
+            mesh,
+            identity,
+            center: regionCenter(region),
+            label,
+            presented: false,
+            metadataHandle: NO_METADATA,
+            estimatedCpuBytes: 0,
+            estimatedGpuBytes: 0,
+            elevated: undefined,
+            region,
+            heightAt,
+            lods: SAME_EDGE_LODS,
+        };
+        // Neighbours are unknown until presentation; updateJunctions adapts the edges then.
+        this.applyGeometry(handle, SAME_EDGE_LODS);
+        this.handles.add(handle);
+        this.createdHandleCount++;
+        return handle;
+    }
+
+    /** Builds the grid of a tile for the given neighbour levels and uploads it to its mesh. */
+    private applyGeometry(
+        handle: IBabylonGeodesicGridHandle,
+        lods: GridEdgeLods,
+    ): void {
+        const topology = this.topologies.get(lods);
         // Rows follow Web Mercator so that vertices line up with DEM pixels.
-        const elevated = heightAt
-            ? projectElevatedGrid(this.topology, region, heightAt)
+        const elevated = handle.heightAt
+            ? projectElevatedGrid(topology, handle.region, handle.heightAt)
             : undefined;
         const geometry = elevated
             ? {
@@ -559,8 +651,8 @@ export class BabylonGeodesicGridPipeline
                   indices: elevated.indices,
               }
             : projectGridTopologyToEllipsoid(
-                  this.topology,
-                  region,
+                  topology,
+                  handle.region,
                   GeodeticSystem.WGS84,
                   { latitudeInterpolation: "mercator" },
               );
@@ -571,47 +663,25 @@ export class BabylonGeodesicGridPipeline
             normals,
         );
 
-        const mesh = new Mesh(`geodesic-grid-${contentId}`, this.scene);
         const vertexData = new VertexData();
         vertexData.positions = geometry.positions;
         vertexData.uvs = geometry.uvs;
         vertexData.indices = geometry.indices;
         vertexData.normals = normals;
-        vertexData.applyToMesh(mesh, elevated !== undefined);
-        mesh.material = this.materialForLod(identity.lod);
-        mesh.isVisible = false;
-        mesh.alwaysSelectAsActiveMesh = true;
+        vertexData.applyToMesh(handle.mesh, elevated !== undefined);
 
-        const label = this.labelLayer.ownerDocument.createElement("span");
-        label.className = "tile-label";
-        label.textContent = `X ${identity.x}  Y ${identity.y}  LOD ${identity.lod}`;
-        label.style.setProperty("--tile-color", lodColor(identity.lod));
-        this.labelLayer.append(label);
-
-        const estimatedCpuBytes =
+        handle.elevated = elevated;
+        handle.lods = lods;
+        handle.estimatedCpuBytes =
             (geometry.positions.length + normals.length) *
                 Float64Array.BYTES_PER_ELEMENT +
             geometry.uvs.byteLength +
             geometry.indices.byteLength;
-        const estimatedGpuBytes =
+        handle.estimatedGpuBytes =
             (geometry.positions.length + normals.length) *
                 Float32Array.BYTES_PER_ELEMENT +
             geometry.uvs.byteLength +
             geometry.indices.byteLength;
-        const handle: IBabylonGeodesicGridHandle = {
-            mesh,
-            identity,
-            center: regionCenter(region),
-            label,
-            presented: false,
-            metadataHandle: NO_METADATA,
-            estimatedCpuBytes,
-            estimatedGpuBytes,
-            elevated,
-        };
-        this.handles.add(handle);
-        this.createdHandleCount++;
-        return handle;
     }
 
     private materialForLod(lod: number): StandardMaterial {
@@ -643,6 +713,10 @@ export class BabylonGeodesicGridPipeline
 
     private disposeHandle(handle: IBabylonGeodesicGridHandle): void {
         if (!this.handles.delete(handle)) return;
+        if (handle.presented) {
+            this.displayed.delete(handle.identity);
+            this.junctionsDirty = true;
+        }
         this.releasedHandleCount++;
         handle.label.remove();
         handle.mesh.dispose(false, false);

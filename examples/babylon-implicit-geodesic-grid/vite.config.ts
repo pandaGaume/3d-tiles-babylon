@@ -22,7 +22,16 @@ export default defineConfig({
             destructuring: true,
         },
     },
-    optimizeDeps: { esbuildOptions: { target: "es2022" } },
+    optimizeDeps: {
+        // Linked from 3d-tiles-core: served from their build so that rebuilding core needs no Vite cache reset.
+        exclude: [
+            "@spacexr/3d-tiles-core",
+            "@spacexr/3d-tiles-runtime",
+            "@spacexr/tiles",
+            "@spacexr/grid",
+        ],
+        esbuildOptions: { target: "es2022" },
+    },
     build: {
         target: "es2022",
         sourcemap: true,

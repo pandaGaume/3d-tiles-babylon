@@ -32,7 +32,7 @@ jobs:
         working-directory: 3d-tiles-core/node
         run: |
           npm ci
-          npm run build --workspace @spacexr/3d-tiles-core --workspace @spacexr/tiles --workspace @spacexr/3d-tiles-runtime
+          npm run build --workspace @spacexr/3d-tiles-core --workspace @spacexr/tiles --workspace @spacexr/grid --workspace @spacexr/3d-tiles-runtime
       - run: npm ci
         working-directory: 3d-tiles-babylon
       - run: npm run format

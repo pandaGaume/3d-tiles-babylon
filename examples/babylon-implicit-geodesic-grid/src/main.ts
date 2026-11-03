@@ -65,6 +65,11 @@ async function run(): Promise<void> {
     const monitoringEnabled = parameters.get("monitor") !== "0";
     const solidRendering = parameters.get("solid") === "1";
     const elevationEnabled = parameters.get("elevation") !== "0";
+    const junctions = parameters.get("junctions") ?? "fine";
+    if (junctions !== "fine" && junctions !== "coarse" && junctions !== "none")
+        throw new RangeError(
+            "The junctions parameter must be fine, coarse or none.",
+        );
     const verticalScaleInput = requiredElement(
         "vertical-scale",
         HTMLInputElement,
@@ -135,6 +140,7 @@ async function run(): Promise<void> {
 
     const pipeline = new BabylonGeodesicGridPipeline(scene, tileLabels, {
         wireframe: !solidRendering,
+        junctions,
         ...(dem
             ? {
                   elevation: {
@@ -227,6 +233,7 @@ async function run(): Promise<void> {
     status.textContent = `Global WebMercator coverage, ${source.dataSources.length} roots, LOD ${source.metrics.minLOD}..${source.metrics.maxLOD}`;
 
     engine.runRenderLoop(() => {
+        pipeline.updateJunctions();
         scene.render();
         monitor.update();
         pipeline.updateDebugLabels();

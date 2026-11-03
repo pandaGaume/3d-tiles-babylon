@@ -34,6 +34,7 @@
     "dependencies": {
         "@spacexr/3d-tiles-core": "file:../3d-tiles-core/node/packages/core",
         "@spacexr/3d-tiles-runtime": "file:../3d-tiles-core/node/packages/runtime",
+        "@spacexr/grid": "file:../3d-tiles-core/node/packages/grid",
         "@spacexr/tiles": "file:../3d-tiles-core/node/packages/tiles"
     }
 }

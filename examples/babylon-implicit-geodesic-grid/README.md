@@ -30,13 +30,14 @@ Tiles start with a 0/0 m height range. When a DEM is loaded, the tile reports it
 
 The camera starts above the Mont Blanc summit. URL parameters:
 
-| Parameter     | Effect                                                     |
-| ------------- | ---------------------------------------------------------- |
-| `elevation=0` | Flat grids, no DEM requests                                |
-| `scale=2`     | Initial altitude scale; the panel slider changes it live   |
-| `solid=1`     | Shaded rendering with a sun light instead of the wireframe |
-| `radius=250`  | Initial camera distance to the summit in metres            |
-| `pitch=50`    | Initial camera pitch in degrees                            |
+| Parameter          | Effect                                                                         |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `elevation=0`      | Flat grids, no DEM requests                                                    |
+| `scale=2`          | Initial altitude scale; the panel slider changes it live                       |
+| `solid=1`          | Shaded rendering with a sun light instead of the wireframe                     |
+| `radius=250`       | Initial camera distance to the summit in metres                                |
+| `pitch=50`         | Initial camera pitch in degrees                                                |
+| `junctions=coarse` | Junction policy between levels of detail: `fine` (default), `coarse` or `none` |
 
 The Mapzen attribution is displayed in the bottom-right corner.
 

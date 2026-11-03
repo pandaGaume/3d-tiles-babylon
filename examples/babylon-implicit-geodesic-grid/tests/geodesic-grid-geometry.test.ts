@@ -1,10 +1,8 @@
 import { GeodeticSystem } from "@spacexr/geodesy";
+import { createGridTopology } from "@spacexr/grid";
 import { describe, expect, it } from "vitest";
 
-import {
-    createGridTopology,
-    projectGridTopologyToEllipsoid,
-} from "../src/geodesic-grid-geometry";
+import { projectGridTopologyToEllipsoid } from "../src/geodesic-grid-geometry";
 import { createGeodesicGridSource, TILE_METRICS } from "../src/grid-source";
 
 function distance(
@@ -114,7 +112,6 @@ describe("geodesic grid geometry", () => {
         const topology = createGridTopology(2);
 
         expect(topology.coordinates).toHaveLength(18);
-        expect(topology.uvs).toHaveLength(18);
         expect(topology.indices).toHaveLength(24);
         expect([...topology.coordinates.slice(0, 6)]).toEqual([
             0, 0, 0.5, 0, 1, 0,
@@ -130,7 +127,7 @@ describe("geodesic grid geometry", () => {
 
         expect(geometry.positions).toHaveLength(27);
         expect(geometry.indices).toBe(topology.indices);
-        expect(geometry.uvs).toBe(topology.uvs);
+        expect([...geometry.uvs.slice(0, 4)]).toEqual([0, 1, 0.5, 1]);
     });
 
     it("accounts for east-west pinching at high latitude", () => {

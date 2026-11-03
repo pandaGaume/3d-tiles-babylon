@@ -55,7 +55,7 @@ See the [package README](packages/core/README.md) for the complete API.
 
 ## Development
 
-`@spacexr/3d-tiles-core`, `@spacexr/3d-tiles-runtime` and `@spacexr/tiles` are not published yet. Until they are, this workspace links them from a `3d-tiles-core` checkout next to this repository, which must be built first:
+`@spacexr/3d-tiles-core`, `@spacexr/3d-tiles-runtime`, `@spacexr/tiles` and `@spacexr/grid` are not published yet. Until they are, this workspace links them from a `3d-tiles-core` checkout next to this repository, which must be built first:
 
 ```text
 Gaume/

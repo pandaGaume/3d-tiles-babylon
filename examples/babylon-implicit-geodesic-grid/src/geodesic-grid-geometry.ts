@@ -1,19 +1,5 @@
 import { GeodeticSystem } from "@spacexr/geodesy";
-
-/**
- * Renderer-neutral parametric topology shared by every geodesic tile.
- *
- * Coordinates are normalized over a tile region: u runs west to east and v
- * runs north to south. They deliberately contain no Cartesian position. This
- * keeps topology independent from the ellipsoid projection and prepares a
- * future instanced implementation where a vertex shader performs projection.
- */
-export interface IGridTopology {
-    readonly subdivisions: number;
-    readonly coordinates: Float32Array;
-    readonly uvs: Float32Array;
-    readonly indices: Uint32Array;
-}
+import type { IGridTopology } from "@spacexr/grid";
 
 /** Unique Cartesian geometry produced for one geographic tile. */
 export interface IEllipsoidTileGeometry {
@@ -43,47 +29,14 @@ function mercatorOrdinate(latitude: number): number {
     return Math.log(Math.tan(Math.PI / 4 + latitude / 2));
 }
 
-/** Creates one reusable normalized grid topology. */
-export function createGridTopology(subdivisions: number): IGridTopology {
-    if (!Number.isInteger(subdivisions) || subdivisions < 1)
-        throw new RangeError("Grid subdivisions must be a positive integer.");
-
-    const vertexCount = (subdivisions + 1) ** 2;
-    const coordinates = new Float32Array(vertexCount * 2);
-    const uvs = new Float32Array(vertexCount * 2);
-    const indices = new Uint32Array(subdivisions * subdivisions * 6);
-    let vertexOffset = 0;
-
-    for (let row = 0; row <= subdivisions; row++) {
-        const v = row / subdivisions;
-        for (let column = 0; column <= subdivisions; column++) {
-            const u = column / subdivisions;
-            coordinates[vertexOffset] = u;
-            coordinates[vertexOffset + 1] = v;
-            uvs[vertexOffset] = u;
-            uvs[vertexOffset + 1] = 1 - v;
-            vertexOffset += 2;
-        }
+/** Texture coordinates of a topology: `u` eastward and `1 - v` northward. */
+export function gridUvs(topology: IGridTopology): Float32Array {
+    const uvs = new Float32Array(topology.coordinates.length);
+    for (let offset = 0; offset < uvs.length; offset += 2) {
+        uvs[offset] = topology.coordinates[offset]!;
+        uvs[offset + 1] = 1 - topology.coordinates[offset + 1]!;
     }
-
-    const rowLength = subdivisions + 1;
-    let indexOffset = 0;
-    for (let row = 0; row < subdivisions; row++) {
-        for (let column = 0; column < subdivisions; column++) {
-            const northWest = row * rowLength + column;
-            const northEast = northWest + 1;
-            const southWest = northWest + rowLength;
-            const southEast = southWest + 1;
-            indices[indexOffset++] = northWest;
-            indices[indexOffset++] = southWest;
-            indices[indexOffset++] = northEast;
-            indices[indexOffset++] = northEast;
-            indices[indexOffset++] = southWest;
-            indices[indexOffset++] = southEast;
-        }
-    }
-
-    return { subdivisions, coordinates, uvs, indices };
+    return uvs;
 }
 
 /**
@@ -150,7 +103,7 @@ export function projectGridTopologyToEllipsoid(
 
     return {
         positions,
-        uvs: topology.uvs,
+        uvs: gridUvs(topology),
         indices: topology.indices,
     };
 }
@@ -219,7 +172,13 @@ export function projectElevatedGrid(
         up.set([normal.x, normal.y, normal.z], vertex * 3);
         heights[vertex] = heightAt(u, v);
     }
-    return { base, up, heights, uvs: topology.uvs, indices: topology.indices };
+    return {
+        base,
+        up,
+        heights,
+        uvs: gridUvs(topology),
+        indices: topology.indices,
+    };
 }
 
 /**
