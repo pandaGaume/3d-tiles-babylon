@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x]
+    steps:
+      # Until @spacexr/3d-tiles-core, -runtime and tiles are published, they are linked from a sibling checkout.
+      - uses: actions/checkout@v7
+        with:
+          path: 3d-tiles-babylon
+      - uses: actions/checkout@v7
+        with:
+          repository: pandaGaume/3d-tiles-core
+          path: 3d-tiles-core
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: |
+            3d-tiles-core/node/package-lock.json
+            3d-tiles-babylon/package-lock.json
+      - name: Build 3d-tiles-core
+        working-directory: 3d-tiles-core/node
+        run: |
+          npm ci
+          npm run build --workspace @spacexr/3d-tiles-core --workspace @spacexr/tiles --workspace @spacexr/3d-tiles-runtime
+      - run: npm ci
+        working-directory: 3d-tiles-babylon
+      - run: npm run format
+        working-directory: 3d-tiles-babylon
+      - run: npm run lint
+        working-directory: 3d-tiles-babylon
+      - run: npm run typecheck
+        working-directory: 3d-tiles-babylon
+      - run: npm test
+        working-directory: 3d-tiles-babylon
+      - run: npm run build
+        working-directory: 3d-tiles-babylon

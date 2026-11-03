@@ -1,0 +1,39 @@
+{
+    "name": "@spacexr/3d-tiles-babylon-workspace",
+    "version": "0.0.0",
+    "private": true,
+    "description": "npm workspace for the Babylon.js adaptation of the SpaceXR 3D Tiles runtime.",
+    "license": "Apache-2.0",
+    "author": "Guillaume Pelletier (SpaceXR)",
+    "type": "module",
+    "engines": {
+        "node": ">=20.11.0"
+    },
+    "workspaces": [
+        "packages/*",
+        "examples/*"
+    ],
+    "overrides": {
+        "esbuild": "0.28.2"
+    },
+    "scripts": {
+        "build": "npm run build --workspaces --if-present",
+        "clean": "npm run clean --workspaces --if-present",
+        "typecheck": "npm run typecheck --workspaces --if-present",
+        "test": "npm run test --workspaces --if-present",
+        "lint": "npm run lint --workspaces --if-present",
+        "lint:fix": "npm run lint:fix --workspaces --if-present",
+        "format": "npm run format --workspaces --if-present",
+        "format:fix": "npm run format:fix --workspaces --if-present",
+        "example:implicit-grid": "npm run dev --workspace @spacexr/example-babylon-implicit-geodesic-grid",
+        "example:implicit-grid:preview": "npm run preview --workspace @spacexr/example-babylon-implicit-geodesic-grid",
+        "example:google-3d-tiles": "npm run dev --workspace @spacexr/example-babylon-google-3d-tiles",
+        "example:google-3d-tiles:preview": "npm run preview --workspace @spacexr/example-babylon-google-3d-tiles",
+        "check": "npm run format && npm run lint && npm run typecheck && npm run test && npm run build"
+    },
+    "dependencies": {
+        "@spacexr/3d-tiles-core": "file:../3d-tiles-core/node/packages/core",
+        "@spacexr/3d-tiles-runtime": "file:../3d-tiles-core/node/packages/runtime",
+        "@spacexr/tiles": "file:../3d-tiles-core/node/packages/tiles"
+    }
+}
