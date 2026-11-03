@@ -71,7 +71,8 @@ export function renderMonitorPanel(
         ` | ${runtime.contents.ready} ready` +
         ` | ${runtime.contents.cached}/${runtime.cache.limits.maxContentEntries} cached` +
         ` | ${runtime.nodes.total}/${runtime.cache.limits.maxMaterializedTiles} nodes` +
-        ` | ${runtime.pendingLoads} pending`;
+        ` | ${runtime.pendingLoads} pending` +
+        ` | ${runtime.nodes.unbalanced} unbalanced`;
     elements.memory.textContent =
         `Memory cache CPU ${formatBytes(runtime.contents.cpuBytes)}/${formatBytes(runtime.cache.limits.maxContentCpuBytes)}` +
         ` | GPU ${formatBytes(runtime.contents.gpuBytes)}/${formatBytes(runtime.cache.limits.maxContentGpuBytes)}` +
