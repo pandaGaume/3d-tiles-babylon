@@ -23,6 +23,7 @@ import {
 import { GeodeticSystem } from "@spacexr/geodesy";
 import {
     JunctionGridTopologyCache,
+    type IGridTopology,
     SAME_EDGE_LODS,
     edgeLodsKey,
     type GridEdgeLods,
@@ -491,11 +492,11 @@ export class BabylonGeodesicGridPipeline
         for (const handle of this.handles) {
             if (!handle.elevated) continue;
             const positions = composeElevatedPositions(handle.elevated, scale);
-            const normals: number[] = [];
-            VertexData.ComputeNormals(
+            const normals = this.surfaceNormals(
+                handle,
+                this.topologies.get(handle.lods),
+                handle.elevated,
                 positions,
-                handle.elevated.indices,
-                normals,
             );
             handle.mesh.updateVerticesData(
                 VertexBuffer.PositionKind,
@@ -660,56 +661,197 @@ export class BabylonGeodesicGridPipeline
     }
 
     /**
-     * Height of a point on the edge of a tile, shared by every tile displayed
-     * at that point. Each displayed level samples the stitched DEM of the tile
-     * that displays it, so tiles of the same level read identical samples.
-     * `NaN` when no DEM is available.
+     * DEM height at a point of the pyramid, normalized `x` eastward and `y`
+     * southward, from a loaded stitched DEM tile of the level containing it.
+     * Stitched tiles share their edge samples, so either side of a tile edge
+     * gives the same value. `NaN` when no such DEM tile is loaded.
      */
-    private edgeHeight(tile: ITileAddress, u: number, v: number): number {
-        const count = 2 ** tile.lod;
-        const x = (tile.x + u) / count;
-        const y = (tile.y + v) / count;
-        const touching = this.displayed.touching(x, y);
-        if (touching.length === 0 || !this.elevation) return Number.NaN;
-
-        const maximumDemLod = this.elevation.dem.source.metrics.maxLOD;
-        const heightAtLevel = (displayed: ITileAddress): number => {
-            const demLod = Math.min(displayed.lod, maximumDemLod);
-            const demTile = ancestorTileAddress(
-                displayed,
-                displayed.lod - demLod,
-            );
-            const grid = this.stitchedDem.get(demTile);
-            if (!grid) return Number.NaN;
-            const demCount = 2 ** demLod;
-            let demU = x * demCount - demTile.x;
-            // The displayed tile may touch the point across the antimeridian.
-            if (demU > 1) demU -= demCount;
-            else if (demU < 0) demU += demCount;
-            return sampleHeightBilinear(
-                grid,
-                demU,
-                y * demCount - demTile.y,
-                "point",
-            );
-        };
-        if (this.edgeHeights === "coarsest") return heightAtLevel(touching[0]!);
-        if (this.edgeHeights === "finest")
-            return heightAtLevel(touching[touching.length - 1]!);
-
-        // Levels beyond the DEM maximum level share its DEM: average over distinct DEM levels.
-        const byDemLevel = new Map<number, number>();
-        for (const displayed of touching) {
-            const demLod = Math.min(displayed.lod, maximumDemLod);
-            if (!byDemLevel.has(demLod))
-                byDemLevel.set(demLod, heightAtLevel(displayed));
+    private demHeight(x: number, y: number, demLod: number): number {
+        const count = 2 ** demLod;
+        const column = x * count;
+        const row = y * count;
+        const columns = Number.isInteger(column)
+            ? [column, column - 1]
+            : [Math.floor(column)];
+        const rows = Number.isInteger(row) ? [row, row - 1] : [Math.floor(row)];
+        for (const tileRow of rows) {
+            if (tileRow < 0 || tileRow >= count) continue;
+            for (const tileColumn of columns) {
+                const grid = this.stitchedDem.get({
+                    lod: demLod,
+                    x: ((tileColumn % count) + count) % count,
+                    y: tileRow,
+                });
+                if (grid)
+                    return sampleHeightBilinear(
+                        grid,
+                        column - tileColumn,
+                        row - tileRow,
+                        "point",
+                    );
+            }
         }
-        const heights = [...byDemLevel.values()].filter(
-            (height) => !Number.isNaN(height),
-        );
-        return heights.length === 0
-            ? Number.NaN
-            : heights.reduce((sum, height) => sum + height, 0) / heights.length;
+        return Number.NaN;
+    }
+
+    /**
+     * Displayed levels whose DEM surface a vertex follows: the level of its tile
+     * inside the tile; on its edges, the levels chosen by the edge height policy
+     * among the tiles displayed at that point, so that every tile touching the
+     * vertex agrees on its height and normal.
+     */
+    private surfaceLevels(tile: ITileAddress, u: number, v: number): number[] {
+        if (u !== 0 && u !== 1 && v !== 0 && v !== 1) return [tile.lod];
+        const count = 2 ** tile.lod;
+        const levels = this.displayed
+            .touching((tile.x + u) / count, (tile.y + v) / count)
+            .map((displayed) => displayed.lod);
+        if (levels.length === 0) return [tile.lod];
+        if (this.edgeHeights === "coarsest") return [levels[0]!];
+        if (this.edgeHeights === "finest") return [levels[levels.length - 1]!];
+        return levels;
+    }
+
+    /** DEM level sampled for a displayed level: overzoomed levels share the deepest DEM. */
+    private demLevel(lod: number): number {
+        return Math.min(lod, this.elevation!.dem.source.metrics.maxLOD);
+    }
+
+    /** Mean DEM height over levels, ignoring missing samples. */
+    private surfaceHeight(
+        x: number,
+        y: number,
+        levels: readonly number[],
+    ): number {
+        let sum = 0;
+        let count = 0;
+        for (const level of levels) {
+            const height = this.demHeight(x, y, this.demLevel(level));
+            if (Number.isNaN(height)) continue;
+            sum += height;
+            count++;
+        }
+        return count === 0 ? Number.NaN : sum / count;
+    }
+
+    /**
+     * Height gradient of the DEM surface, in metres per normalized pyramid
+     * unit along `x` and `y`, from central differences one grid cell apart.
+     * Missing neighbours fall back to one-sided differences.
+     */
+    private surfaceGradient(
+        x: number,
+        y: number,
+        levels: readonly number[],
+    ): [number, number] | undefined {
+        let gradientX = 0;
+        let gradientY = 0;
+        let count = 0;
+        const difference = (
+            before: number,
+            center: number,
+            after: number,
+            step: number,
+        ): number | undefined => {
+            if (!Number.isNaN(before) && !Number.isNaN(after))
+                return (after - before) / (2 * step);
+            if (!Number.isNaN(after) && !Number.isNaN(center))
+                return (after - center) / step;
+            if (!Number.isNaN(before) && !Number.isNaN(center))
+                return (center - before) / step;
+            return undefined;
+        };
+        for (const level of levels) {
+            // One grid cell at the displayed level: the samples fall on the neighbouring vertices, so normals
+            // describe the mesh surface rather than DEM detail the triangles cannot show.
+            const step = 1 / (this.subdivisions * 2 ** level);
+            const demLod = this.demLevel(level);
+            const center = this.demHeight(x, y, demLod);
+            const alongX = difference(
+                this.demHeight(x - step, y, demLod),
+                center,
+                this.demHeight(x + step, y, demLod),
+                step,
+            );
+            const alongY = difference(
+                this.demHeight(x, y - step, demLod),
+                center,
+                this.demHeight(x, y + step, demLod),
+                step,
+            );
+            if (alongX === undefined || alongY === undefined) continue;
+            gradientX += alongX;
+            gradientY += alongY;
+            count++;
+        }
+        return count === 0 ? undefined : [gradientX / count, gradientY / count];
+    }
+
+    /**
+     * Normals of the DEM surface rather than of the mesh: a vertex shared by
+     * several tiles receives the same normal in each of them, which removes the
+     * shading seams along tile edges. Vertices without DEM keep mesh normals.
+     */
+    private surfaceNormals(
+        handle: IBabylonGeodesicGridHandle,
+        topology: IGridTopology,
+        elevated: IElevatedGridGeometry,
+        positions: number[],
+    ): number[] {
+        const normals: number[] = [];
+        VertexData.ComputeNormals(positions, elevated.indices, normals);
+        const { lod, x: column, y: row } = handle.identity;
+        const count = 2 ** lod;
+        const circumference =
+            2 * Math.PI * GeodeticSystem.WGS84.ellipsoid.semiMajorAxis;
+        for (
+            let vertex = 0;
+            vertex < topology.coordinates.length / 2;
+            vertex++
+        ) {
+            const u = topology.coordinates[vertex * 2]!;
+            const v = topology.coordinates[vertex * 2 + 1]!;
+            const x = (column + u) / count;
+            const y = (row + v) / count;
+            const gradient = this.surfaceGradient(
+                x,
+                y,
+                this.surfaceLevels(handle.identity, u, v),
+            );
+            if (!gradient) continue;
+            const upX = elevated.up[vertex * 3]!;
+            const upY = elevated.up[vertex * 3 + 1]!;
+            const upZ = elevated.up[vertex * 3 + 2]!;
+            const horizontal = Math.hypot(upX, upY);
+            if (horizontal === 0) continue;
+            // East and north of the local tangent plane; y grows southward on the map.
+            const [eastX, eastY] = [-upY / horizontal, upX / horizontal];
+            const [northX, northY, northZ] = [
+                -upZ * eastY,
+                upZ * eastX,
+                upX * eastY - upY * eastX,
+            ];
+            // Web Mercator is conformal: one normalized unit spans circumference * cos(latitude) on the ground.
+            const metres = circumference * horizontal;
+            const slopeEast = (gradient[0] * this.verticalScale) / metres;
+            const slopeNorth = (-gradient[1] * this.verticalScale) / metres;
+            const normalX = upX - slopeEast * eastX - slopeNorth * northX;
+            const normalY = upY - slopeEast * eastY - slopeNorth * northY;
+            const normalZ = upZ - slopeNorth * northZ;
+            // Keep the orientation Babylon gives the mesh: its winding convention decides which side is lit.
+            const meshSide =
+                normals[vertex * 3]! * normalX +
+                    normals[vertex * 3 + 1]! * normalY +
+                    normals[vertex * 3 + 2]! * normalZ <
+                0
+                    ? -1
+                    : 1;
+            const length = Math.hypot(normalX, normalY, normalZ) * meshSide;
+            normals[vertex * 3] = normalX / length;
+            normals[vertex * 3 + 1] = normalY / length;
+            normals[vertex * 3 + 2] = normalZ / length;
+        }
+        return normals;
     }
 
     /** Levels of detail displayed at the points of the tile edges, to detect when edge heights change. */
@@ -744,12 +886,16 @@ export class BabylonGeodesicGridPipeline
     ): void {
         const topology = this.topologies.get(lods);
         const ownHeight = handle.heightAt;
+        const { lod, x: column, y: row } = handle.identity;
+        const count = 2 ** lod;
         const heightAt: HeightSampler | undefined = ownHeight
             ? (u, v) => {
-                  if (u !== 0 && u !== 1 && v !== 0 && v !== 1)
-                      return ownHeight(u, v);
-                  const shared = this.edgeHeight(handle.identity, u, v);
-                  return Number.isNaN(shared) ? ownHeight(u, v) : shared;
+                  const height = this.surfaceHeight(
+                      (column + u) / count,
+                      (row + v) / count,
+                      this.surfaceLevels(handle.identity, u, v),
+                  );
+                  return Number.isNaN(height) ? ownHeight(u, v) : height;
               }
             : undefined;
         // Rows follow Web Mercator so that vertices line up with DEM pixels.
@@ -772,11 +918,21 @@ export class BabylonGeodesicGridPipeline
                   { latitudeInterpolation: "mercator" },
               );
         const normals: number[] = [];
-        VertexData.ComputeNormals(
-            geometry.positions,
-            geometry.indices,
-            normals,
-        );
+        if (elevated)
+            normals.push(
+                ...this.surfaceNormals(
+                    handle,
+                    topology,
+                    elevated,
+                    geometry.positions,
+                ),
+            );
+        else
+            VertexData.ComputeNormals(
+                geometry.positions,
+                geometry.indices,
+                normals,
+            );
 
         const vertexData = new VertexData();
         vertexData.positions = geometry.positions;

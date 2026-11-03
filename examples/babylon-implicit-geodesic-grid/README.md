@@ -26,7 +26,7 @@ No API key or `.env` file is required.
 
 Grid vertices are displaced with Mapzen Terrarium heights from `@spacexr/tiles`, one DEM tile per grid tile. Beyond level 15, the deepest Terrarium level, a grid samples the matching sub-area of its level 15 ancestor, kept in a shared cache.
 
-DEM tiles are stitched with the first column, row and sample of their east, south and south-east neighbours, as in SpaceXR, and sampled in point registration: neighbouring grids of the same level read identical heights on their shared edge. Where tiles of several levels meet, every edge vertex takes the height chosen by the `heights` parameter, computed identically by every tile touching it.
+DEM tiles are stitched with the first column, row and sample of their east, south and south-east neighbours, as in SpaceXR, and sampled in point registration: neighbouring grids of the same level read identical heights on their shared edge. Where tiles of several levels meet, every edge vertex takes the height chosen by the `heights` parameter, computed identically by every tile touching it. The runtime keeps neighbouring tiles within one level of detail (2:1 quadtree balance), and shaded rendering uses normals of the stitched DEM surface, so tile edges show neither cracks nor shading seams.
 
 Tiles start with a 0/0 m height range. When a DEM is loaded, the tile reports its measured range to the runtime through `tileBoundingVolume`, and the four quadrant ranges are recorded for its children. The resolver applies them when the children are created, and the runtime applies them again to children created before the parent DEM arrived.
 
@@ -41,6 +41,7 @@ The camera starts above the Mont Blanc summit. URL parameters:
 | `pitch=50`         | Initial camera pitch in degrees                                                                                |
 | `junctions=coarse` | Junction policy between levels of detail: `fine` (default), `coarse` or `none`                                 |
 | `heights=finest`   | Height of edge vertices shared by several levels: DEM of the `coarsest` (default), `finest` or `average` level |
+| `balance=0`        | Disables the 2:1 quadtree balance, which keeps neighbouring tiles within one level of detail                   |
 
 The Mapzen attribution is displayed in the bottom-right corner.
 

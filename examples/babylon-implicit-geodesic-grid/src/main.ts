@@ -208,6 +208,9 @@ async function run(): Promise<void> {
         refinementHysteresisRatio: 0.2,
         maxConcurrentLoads: 12,
         instrumentation: { enabled: monitoringEnabled },
+        // Neighbouring tiles stay within one level, so that every edge junction connects.
+        quadtreeBalance:
+            parameters.get("balance") === "0" ? false : { wrapX: true },
         cache: {
             maxContentEntries: 1024,
             maxMaterializedTiles: 4096,

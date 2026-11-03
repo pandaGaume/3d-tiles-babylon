@@ -8,6 +8,7 @@ import type {
 import {
     createWebMapImplicitSource,
     type ImplicitTilesetDecorator,
+    type IImplicitTileAddressContext,
     type IImplicitTileResolveContext,
     type IImplicitTileResolver,
     type IImplicitTileOverride,
@@ -76,6 +77,14 @@ class GeodesicGridImplicitResolver implements IImplicitTileResolver {
         >,
         private readonly prepared: IPreparedHeights | undefined,
     ) {}
+
+    /** Address in the global Web Mercator pyramid, so that the runtime balances the quadtree across roots. */
+    public addressOf(context: IImplicitTileAddressContext): ITileAddress {
+        const decorator = this.decoratorsByRoot.get(context.rootTile);
+        if (!decorator)
+            throw new Error("No data source owns this implicit root tile.");
+        return decorator.addressOf(context);
+    }
 
     public resolve(
         context: IImplicitTileResolveContext,
