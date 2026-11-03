@@ -8,6 +8,7 @@ import type { Scene } from "@babylonjs/core/scene.js";
 import type {
     IBabylonTileResourceStatistics,
     IBabylonTileResourceStatisticsProvider,
+    MeshRasterDrape,
 } from "@spacexr/3d-tiles-babylon";
 import {
     NO_METADATA,
@@ -91,6 +92,8 @@ export interface IBabylonGeodesicGridPipelineOptions {
     junctions?: JunctionPolicy;
     /** Heights of the edge vertices shared with other levels. Defaults to `coarsest`. */
     edgeHeights?: EdgeHeightPolicy;
+    /** Drapes imagery pages on shaded grids. Wireframe grids keep their level colours. */
+    drape?: MeshRasterDrape;
 }
 
 /**
@@ -215,6 +218,7 @@ export class BabylonGeodesicGridPipeline
     private readonly scene: Scene;
     private readonly wireframe: boolean;
     private readonly elevation: IGridElevationOptions | undefined;
+    private readonly drape: MeshRasterDrape | undefined;
     private verticalScale: number;
     private createdHandleCount = 0;
     private releasedHandleCount = 0;
@@ -229,6 +233,7 @@ export class BabylonGeodesicGridPipeline
         this.labelLayer = labelLayer;
         this.wireframe = options.wireframe ?? true;
         this.elevation = options.elevation;
+        this.drape = options.wireframe === false ? options.drape : undefined;
         this.verticalScale = options.elevation?.verticalScale ?? 1;
         this.junctions = options.junctions ?? "fine";
         this.edgeHeights = options.edgeHeights ?? "coarsest";
@@ -516,6 +521,7 @@ export class BabylonGeodesicGridPipeline
         // Neighbours are unknown until presentation; updateJunctions adapts the edges then.
         this.applyGeometry(handle, SAME_EDGE_LODS);
         this.handles.add(handle);
+        this.drape?.add(mesh, identity);
         this.createdHandleCount++;
         return handle;
     }
@@ -711,6 +717,12 @@ export class BabylonGeodesicGridPipeline
             material.diffuseColor = color.scale(0.55);
             material.emissiveColor = color;
             material.disableLighting = true;
+        } else if (this.drape) {
+            // Imagery replaces the level colour, which only shows where no page has arrived yet.
+            material.diffuseColor = color.scale(0.9);
+            material.emissiveColor = Color3.Black();
+            material.twoSidedLighting = true;
+            this.drape.attach(material);
         } else {
             // Shaded relief: the scene lights reveal slopes; a faint emissive keeps the LOD tint in shadows.
             material.diffuseColor = color.scale(0.9);
@@ -732,6 +744,7 @@ export class BabylonGeodesicGridPipeline
         }
         this.releasedHandleCount++;
         handle.label.remove();
+        this.drape?.remove(handle.mesh);
         handle.mesh.dispose(false, false);
     }
 }

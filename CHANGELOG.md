@@ -17,6 +17,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   - `BabylonRuntimeMonitor` joins runtime statistics with Babylon frame, draw call, GPU time and heap counters.
 - Google Photorealistic 3D Tiles and implicit grid examples, moved from 3d-tiles-core.
 
+- Imagery draping on terrain, for the mesh draping engine of the 3d-tiles-core `docs/draping.md`:
+  - `TextureArrayPool`, ported from the SpaceXR `Texture3`, holds RGBA8 pages or RGBA32F tables in one WebGL 2 texture array, writes single layers with `texSubImage3D` and grows, copying RGBA8 layers on the GPU;
+  - `BabylonRasterPages` loads stitched imagery pages into the pool, rewrites the pages a neighbour completes and indexes the resident pages;
+  - `BabylonRasterTileAdapter` lets a second runtime traverse an imagery quadtree on texel size, keep its pages resident and publish the presented imagery cut;
+  - `MeshRasterDrape` and `RasterDrapeMaterialPlugin` drape each terrain mesh with `4^k` pages, `k` from 0 to 4 following the imagery cut, through a per-mesh cell table read with `texelFetch`, on shared standard materials.
+- The implicit grid example drapes a local debug imagery, a checkerboard labelled with each page address, on shaded grids (`solid=1`, `imagery=none` disables it), or the imagery of a local module ignored by git (`imagery=<name>` loads `src/local/<name>.imagery.ts`); `kmax` sets the deepest drape, 4 by default.
+- The implicit grid example generates DEM levels 16 to 18 from Terrarium level 15 instead of overzooming it, with the interpolation chosen by the `interpolation` URL parameter: `cubic` (default), `bilinear`, `linear` or `nearest`.
+
 ### Changed
 
 - The Google example uses the split activation and presentation ports instead of the legacy content adapter, and detects external tilesets from the payload instead of the media type or `.json` extension.

@@ -22,3 +22,6 @@ Thumbs.db
 # AI tooling
 .claude/
 
+
+# Local example sources that must not be published
+examples/*/src/local/

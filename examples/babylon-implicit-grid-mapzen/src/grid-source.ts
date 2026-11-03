@@ -18,6 +18,7 @@ import {
 } from "@spacexr/3d-tiles-runtime";
 
 import type { ChildHeightRanges } from "@spacexr/dem";
+import { parentTileAddress } from "@spacexr/tiles";
 
 export const TILE_METRICS = new WebMercatorTileMetrics({
     minLOD: 3,
@@ -97,11 +98,17 @@ class GeodesicGridImplicitResolver implements IImplicitTileResolver {
         const properties = override?.metadata?.properties;
         if (!this.prepared || !region || !properties) return override;
 
-        const range = this.prepared.ranges.rangeFor({
+        // Ranges are prepared one level ahead; deeper tiles, such as imagery tiles, use their deepest prepared ancestor.
+        let address: ITileAddress | undefined = {
             lod: Number(properties.lod),
             x: Number(properties.x),
             y: Number(properties.y),
-        });
+        };
+        let range = undefined as readonly [number, number] | undefined;
+        while (address && !range) {
+            range = this.prepared.ranges.rangeFor(address);
+            address = parentTileAddress(address);
+        }
         if (!range) return override;
         const scale = this.prepared.verticalScale();
         return {
@@ -120,11 +127,21 @@ class GeodesicGridImplicitResolver implements IImplicitTileResolver {
     }
 }
 
-/** Creates a global Web Map forest whose LOD 3 roots are decorated as implicit 3D Tiles. */
+export interface IGridSourceOptions {
+    /** Pyramid levels and tile size. Defaults to the terrain grid metrics. */
+    metrics?: WebMercatorTileMetrics;
+    /** Prefix of the data source identifiers. Defaults to `geodesic-grid`. */
+    id?: string;
+}
+
+/** Creates a global Web Map forest whose `minLOD` roots are decorated as implicit 3D Tiles. */
 export function createGeodesicGridSource(
     prepared?: IPreparedHeights,
+    options: IGridSourceOptions = {},
 ): IGeodesicGridSource {
-    const rootsPerAxis = 2 ** TILE_METRICS.minLOD;
+    const metrics = options.metrics ?? TILE_METRICS;
+    const id = options.id ?? "geodesic-grid";
+    const rootsPerAxis = 2 ** metrics.minLOD;
     const children: ITile[] = [];
     const dataSources: WebMapTileDataSource[] = [];
     const decoratorsByRoot = new Map<ITile, ImplicitTilesetDecorator>();
@@ -132,10 +149,10 @@ export function createGeodesicGridSource(
     for (let y = 0; y < rootsPerAxis; y++) {
         for (let x = 0; x < rootsPerAxis; x++) {
             const source = createWebMapImplicitSource({
-                id: `geodesic-grid-${x}-${y}`,
-                urlTemplates: "grid://tile/{z}/{x}/{y}",
-                metrics: TILE_METRICS,
-                rootAddress: { lod: TILE_METRICS.minLOD, x, y },
+                id: `${id}-${x}-${y}`,
+                urlTemplates: `${id}://tile/{z}/{x}/{y}`,
+                metrics,
+                rootAddress: { lod: metrics.minLOD, x, y },
                 subtreeLevels: 4,
                 // Tiles start flat; the DEM loaded with each tile reports its measured height range.
                 minimumHeight: 0,
@@ -150,11 +167,8 @@ export function createGeodesicGridSource(
         }
     }
 
-    const maximumLatitudeRadians = (TILE_METRICS.maxLatitude * Math.PI) / 180;
-    const rootGeometricError = TILE_METRICS.groundResolution(
-        0,
-        TILE_METRICS.minLOD,
-    );
+    const maximumLatitudeRadians = (metrics.maxLatitude * Math.PI) / 180;
+    const rootGeometricError = metrics.groundResolution(0, metrics.minLOD);
     const firstChild = children[0];
     if (!firstChild)
         throw new Error(
@@ -187,6 +201,21 @@ export function createGeodesicGridSource(
         },
         resolver: new GeodesicGridImplicitResolver(decoratorsByRoot, prepared),
         dataSources,
-        metrics: TILE_METRICS,
+        metrics,
     };
+}
+
+/** Address of an implicit grid tile, read from the `lod`, `x` and `y` metadata of the tile. */
+export function metadataTileAddress(tile: {
+    id: string;
+    source: ITile;
+}): ITileAddress {
+    const properties = tile.source.metadata?.properties;
+    const coordinate = (name: "lod" | "x" | "y"): number => {
+        const value = properties?.[name];
+        if (typeof value !== "number" || !Number.isSafeInteger(value))
+            throw new Error(`Tile ${tile.id} has no valid ${name} metadata.`);
+        return value;
+    };
+    return { lod: coordinate("lod"), x: coordinate("x"), y: coordinate("y") };
 }

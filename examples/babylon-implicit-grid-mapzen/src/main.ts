@@ -5,9 +5,13 @@ import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import {
+    BabylonRasterPages,
+    BabylonRasterTileAdapter,
     BabylonRuntimeDriver,
     BabylonRuntimeMonitor,
+    MeshRasterDrape,
     createGeospatialCamera,
+    type IBabylonRasterPage,
     createGeospatialEngine,
     createGeospatialScene,
 } from "@spacexr/3d-tiles-babylon";
@@ -15,7 +19,9 @@ import {
     DenseImplicitSubtreeLoader,
     EcefSpatialMetric,
     TileRuntime,
+    WebMercatorTileMetrics,
     type IEcefCameraFrame,
+    type ITileAddress,
     type IEcefSpatialState,
     type IRuntimeAdapter,
 } from "@spacexr/3d-tiles-runtime";
@@ -34,7 +40,13 @@ import {
     type IBabylonGeodesicGridHandle,
 } from "./babylon-geodesic-grid-pipeline";
 import DemDecoderWorker from "./dem-decoder.worker?worker";
-import { createGeodesicGridSource } from "./grid-source";
+import { debugImageryTile } from "./debug-imagery";
+import { loadLocalImagery } from "./local-imagery";
+import {
+    TILE_METRICS,
+    createGeodesicGridSource,
+    metadataTileAddress,
+} from "./grid-source";
 import { clearMonitorPanel, renderMonitorPanel } from "./monitor-panel";
 
 function requiredElement<TElement extends HTMLElement>(
@@ -81,6 +93,20 @@ async function run(): Promise<void> {
         throw new RangeError(
             "The heights parameter must be coarsest, finest or average.",
         );
+    const demInterpolation = parameters.get("interpolation") ?? "cubic";
+    if (
+        demInterpolation !== "nearest" &&
+        demInterpolation !== "linear" &&
+        demInterpolation !== "bilinear" &&
+        demInterpolation !== "cubic"
+    )
+        throw new RangeError(
+            "The interpolation parameter must be cubic, bilinear, linear or nearest.",
+        );
+    // `debug` draws pages locally; any other name loads src/local/<name>.imagery.ts, kept out of the repository.
+    const imagery = parameters.get("imagery") ?? "debug";
+    // Imagery drapes shaded grids only; wireframe grids keep their level colours.
+    const imageryEnabled = solidRendering && imagery !== "none";
     const verticalScaleInput = requiredElement(
         "vertical-scale",
         HTMLInputElement,
@@ -149,8 +175,97 @@ async function run(): Promise<void> {
         sky.groundColor = new Color3(0.1, 0.1, 0.12);
     }
 
+    // Imagery is a second implicit quadtree, refined on texel size instead of geometric error.
+    const imagerySource = !imageryEnabled
+        ? undefined
+        : imagery === "debug"
+          ? {
+                load: (address: ITileAddress) =>
+                    Promise.resolve(debugImageryTile(address)),
+                maxLOD: 20,
+                attribution: "",
+            }
+          : await loadLocalImagery(imagery);
+    const imageryMetrics = new WebMercatorTileMetrics({
+        minLOD: 3,
+        maxLOD: imagerySource?.maxLOD ?? 20,
+        tileSize: 256,
+    });
+    const imageryPages = imagerySource
+        ? new BabylonRasterPages(scene, {
+              load: imagerySource.load,
+              maxLOD: imageryMetrics.maxLOD,
+              wrapX: true,
+              tileSize: imageryMetrics.tileSize,
+          })
+        : undefined;
+    if (imagerySource?.attribution) {
+        const attribution = requiredElement("attribution", HTMLElement);
+        attribution.textContent = [
+            imagerySource.attribution,
+            attribution.textContent,
+        ]
+            .filter(Boolean)
+            .join(" | ");
+    }
+    // Deepest drape below each terrain tile: up to 4^kmax imagery pages per tile.
+    const maxDrapeDepth = Number(parameters.get("kmax") ?? "4");
+    const drape = imageryPages
+        ? new MeshRasterDrape(scene, imageryPages, { maxDepth: maxDrapeDepth })
+        : undefined;
+
+    function createImageryRuntime(
+        pages: BabylonRasterPages,
+    ): TileRuntime<
+        IEcefCameraFrame,
+        IEcefSpatialState,
+        IBabylonRasterPage,
+        never
+    > {
+        // Imagery tiles share the height ranges prepared by the terrain DEM, for culling and distances.
+        const imagerySource = createGeodesicGridSource(
+            dem
+                ? {
+                      ranges: childHeightRanges,
+                      verticalScale: () => verticalScale,
+                  }
+                : undefined,
+            { metrics: imageryMetrics, id: "imagery" },
+        );
+        const imageryAdapter = new BabylonRasterTileAdapter<IEcefSpatialState>(
+            pages,
+            {
+                addressOf: (context) => metadataTileAddress(context.tile),
+            },
+        );
+        return new TileRuntime({
+            id: "implicit-grid-mapzen-imagery",
+            uri: "memory://imagery/tileset.json",
+            adapter: {
+                tilesets: {
+                    load: async () => ({ tileset: imagerySource.tileset }),
+                },
+                subtrees: new DenseImplicitSubtreeLoader(),
+                implicitTiles: imagerySource.resolver,
+                spatial: new EcefSpatialMetric({ geodeticSystem }),
+                activation: imageryAdapter,
+                presentation: imageryAdapter,
+            },
+            // The geometric error of an imagery tile is one texel: at most two texels per screen pixel.
+            maxScreenSpaceError: 2,
+            refinementHysteresisRatio: 0.2,
+            maxConcurrentLoads: 12,
+            cache: {
+                maxContentEntries: 512,
+                maxMaterializedTiles: 4096,
+                unusedFrameRetention: 180,
+            },
+        });
+    }
+
     const pipeline = new BabylonGeodesicGridPipeline(scene, tileLabels, {
         wireframe: !solidRendering,
+        ...(drape ? { drape } : {}),
         junctions,
         edgeHeights,
         ...(dem
@@ -178,6 +293,11 @@ async function run(): Promise<void> {
                               ),
                           ),
                           maxLOD: dem.source.metrics.maxLOD,
+                          // Levels below the DEM are generated down to the deepest grid level.
+                          generation: {
+                              maxLOD: TILE_METRICS.maxLOD,
+                              interpolation: demInterpolation,
+                          },
                           // The grid covers every longitude.
                           wrapX: true,
                           childHeightRanges,
@@ -227,6 +347,10 @@ async function run(): Promise<void> {
         },
     });
 
+    const imageryRuntime = imageryPages
+        ? createImageryRuntime(imageryPages)
+        : undefined;
+
     const monitor = new BabylonRuntimeMonitor(
         engine,
         scene,
@@ -249,13 +373,21 @@ async function run(): Promise<void> {
             console.error("3D Tiles pipeline frame failed", error);
         },
     });
+    const imageryDriver = imageryRuntime
+        ? new BabylonRuntimeDriver(imageryRuntime, scene, {
+              camera,
+              onError: (error) =>
+                  console.error("Imagery runtime frame failed", error),
+          })
+        : undefined;
     status.textContent = "Loading the implicit quadtree...";
-    await driver.start();
+    await Promise.all([driver.start(), imageryDriver?.start()]);
     monitor.setStartupMilliseconds(performance.now() - startupStartedAt);
     status.textContent = `Global WebMercator coverage, ${source.dataSources.length} roots, LOD ${source.metrics.minLOD}..${source.metrics.maxLOD}`;
 
     engine.runRenderLoop(() => {
         pipeline.updateJunctions();
+        drape?.update();
         scene.render();
         monitor.update();
         pipeline.updateDebugLabels();
@@ -268,8 +400,12 @@ async function run(): Promise<void> {
         () => {
             window.removeEventListener("resize", resize);
             driver.dispose();
+            imageryDriver?.dispose();
             unsubscribeEvents();
             void runtime.dispose();
+            void imageryRuntime?.dispose();
+            drape?.dispose();
+            imageryPages?.dispose();
             monitor.dispose();
             pipeline.dispose();
             scene.dispose();

@@ -24,7 +24,7 @@ No API key or `.env` file is required.
 
 ## Elevation
 
-Grid vertices are displaced with Mapzen Terrarium heights from a `DemPyramid` of `@spacexr/dem`, one DEM tile per grid tile. Beyond level 15, the deepest Terrarium level, a grid samples the matching sub-area of its level 15 ancestor, kept in the shared cache of the pyramid.
+Grid vertices are displaced with Mapzen Terrarium heights from a `DemPyramid` of `@spacexr/dem`, one DEM tile per grid tile. Below level 15, the deepest Terrarium level, DEM tiles are generated level by level down to 18, the deepest grid level, by interpolating the level above: `interpolation=cubic` (default), `bilinear`, `linear` or `nearest`.
 
 DEM tiles are stitched with the first column, row and sample of their east, south and south-east neighbours, as in SpaceXR, and sampled in point registration: neighbouring grids of the same level read identical heights on their shared edge. Where tiles of several levels meet, every edge vertex takes the height chosen by the `heights` parameter, computed identically by every tile touching it. The runtime keeps neighbouring tiles within one level of detail (2:1 quadtree balance), and shaded rendering uses normals of the stitched DEM surface, so tile edges show neither cracks nor shading seams.
 
@@ -52,3 +52,9 @@ The overlay joins the renderer-neutral runtime cache statistics with Babylon cou
 The `Frame` line uses Babylon's standard `SceneInstrumentation` and `EngineInstrumentation` counters, averaged over the last second: frame time, time between frames (JavaScript outside rendering, such as runtime traversal and tile reception), render time, active mesh selection time and GPU frame time when the browser exposes GPU timer queries. DEM tiles are decoded in a pool of web workers, so their decoding does not appear in these timings.
 
 Monitoring is throttled to four publications per second. Open the example with `?monitor=0` to disable both runtime metric collection and Babylon `SceneInstrumentation` observers when measuring the viewer without diagnostic overhead.
+
+## Imagery
+
+Shaded grids (`solid=1`) are draped with imagery from a second implicit quadtree, levels 3 to 20, traversed by its own runtime on texel size rather than geometric error. Each terrain tile is divided into as many cells as the imagery cut needs above it, one page per cell, up to 4 levels below the terrain: distant tiles show one page, near tiles up to 256, and a cell falls back to a coarser page while its own loads; pages are stitched with their neighbours, so the imagery shows no seam between pages. The imagery is drawn locally for now: a checkerboard tinted by level and labelled with the page address, which makes the binding visible. `imagery=none` keeps the level colours, and `kmax` sets the deepest drape, 4 levels below the terrain by default.
+
+`imagery=<name>` drapes the imagery of `src/local/<name>.imagery.ts`, a module exporting `createImagery()` with a tile loader, a maximum level and an attribution (see `src/local-imagery.ts`). The `src/local/` folder is ignored by git, for sources that must stay on the developer machine.
