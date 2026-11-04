@@ -24,6 +24,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   - `MeshRasterDrape` and `RasterDrapeMaterialPlugin` drape each terrain mesh with `4^k` pages, `k` from 0 to 4 following the imagery cut, through a per-mesh cell table read with `texelFetch`, on shared standard materials.
 - The implicit grid example drapes a local debug imagery, a checkerboard labelled with each page address, on shaded grids (`solid=1`, `imagery=none` disables it), or the imagery of a local module ignored by git (`imagery=<name>` loads `src/local/<name>.imagery.ts`); `kmax` sets the deepest drape, 4 by default.
 - The implicit grid example generates DEM levels 16 to 18 from Terrarium level 15 instead of overzooming it, with the interpolation chosen by the `interpolation` URL parameter: `cubic` (default), `bilinear`, `linear` or `nearest`.
+- `ITerrainEngine` makes terrain engines interchangeable behind the runtime ports and two render loop hooks. `MeshTerrainEngine`, the CPU engine, moves from the implicit grid example to `@spacexr/3d-tiles-babylon` with the grid pipeline, its geometry, `DisplayedTiles` and the geodesic grid source; the example selects it with `engine=mesh`.
 
 ### Changed
 
@@ -36,6 +37,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - The implicit grid monitor shows the number of unbalanced tile edges reported by the runtime.
 - The examples serve the packages linked from 3d-tiles-core without Vite pre-bundling.
 - The implicit grid example is renamed `babylon-implicit-grid-mapzen` and takes its elevation from a `DemPyramid` of `@spacexr/dem`: DEM caching, stitching, overzoom, child ranges, surface heights, gradients and normals moved from the example to the package.
+- Grid rebuilds after a presentation change take at most 4 ms per frame (`junctionBudgetMilliseconds`, `junctionBudget` in the example), cracks first and nearest tiles first, so that a wave of loaded tiles spreads over several frames.
 
 ### Fixed
 
@@ -45,6 +47,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Imagery no longer flickers while the camera turns: a mesh drape is written as soon as the mesh is registered, before its first draw, and its depth decreases only after the imagery cut has stayed coarser for `depthHoldMilliseconds`, 500 ms by default.
 - The implicit grid example retains the DEM tiles of the displayed and ghost tiles, and reloads the DEM of a tile shown again after it left the cache: with siblings preloaded, the DEM cache otherwise evicted DEM tiles still displayed, and their edges cracked.
 - The implicit grid example keeps the last known level of tiles that left the view (ghosts) when connecting the edges of their neighbours, so that turning the camera no longer rebuilds edges back and forth.
+- Presenting terrain tiles no longer stalls frames for 30 to 50 ms: the signature that detects edge height changes lists the known tiles touching the tile boundary in one pass (`DisplayedTiles.touchingBoundary`), instead of sampling every edge vertex.
 - The implicit grid example enables `preloadSiblings` in both runtimes, so that turning the camera no longer falls back to coarser terrain and imagery; `hysteresis` sets the refinement hysteresis ratio, 0.2 by default, and `coarsenDelay` the coarsening delay, 20 frames by default.
 
 - GPU frame time monitoring with Babylon.js 9.33, which no longer registers time queries when `Engine` is imported.

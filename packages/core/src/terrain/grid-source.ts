@@ -1,10 +1,4 @@
-import type {
-    IMetadataEntity,
-    IMetadataSchema,
-    ITile,
-    ITileset,
-    NonEmptyArray,
-} from "@spacexr/3d-tiles-core";
+import type { IMetadataEntity, IMetadataSchema, ITile, ITileset, NonEmptyArray } from "@spacexr/3d-tiles-core";
 import {
     createWebMapImplicitSource,
     type ImplicitTilesetDecorator,
@@ -72,27 +66,20 @@ export interface IPreparedHeights {
 
 class GeodesicGridImplicitResolver implements IImplicitTileResolver {
     public constructor(
-        private readonly decoratorsByRoot: ReadonlyMap<
-            ITile,
-            ImplicitTilesetDecorator
-        >,
+        private readonly decoratorsByRoot: ReadonlyMap<ITile, ImplicitTilesetDecorator>,
         private readonly prepared: IPreparedHeights | undefined,
     ) {}
 
     /** Address in the global Web Mercator pyramid, so that the runtime balances the quadtree across roots. */
     public addressOf(context: IImplicitTileAddressContext): ITileAddress {
         const decorator = this.decoratorsByRoot.get(context.rootTile);
-        if (!decorator)
-            throw new Error("No data source owns this implicit root tile.");
+        if (!decorator) throw new Error("No data source owns this implicit root tile.");
         return decorator.addressOf(context);
     }
 
-    public resolve(
-        context: IImplicitTileResolveContext,
-    ): IImplicitTileOverride | undefined {
+    public resolve(context: IImplicitTileResolveContext): IImplicitTileOverride | undefined {
         const decorator = this.decoratorsByRoot.get(context.rootTile);
-        if (!decorator)
-            throw new Error("No data source owns this implicit root tile.");
+        if (!decorator) throw new Error("No data source owns this implicit root tile.");
         const override = decorator.resolve(context);
         const region = override?.boundingVolume?.region;
         const properties = override?.metadata?.properties;
@@ -114,14 +101,7 @@ class GeodesicGridImplicitResolver implements IImplicitTileResolver {
         return {
             ...override,
             boundingVolume: {
-                region: [
-                    region[0],
-                    region[1],
-                    region[2],
-                    region[3],
-                    range[0] * scale,
-                    range[1] * scale,
-                ],
+                region: [region[0], region[1], region[2], region[3], range[0] * scale, range[1] * scale],
             },
         };
     }
@@ -135,10 +115,7 @@ export interface IGridSourceOptions {
 }
 
 /** Creates a global Web Map forest whose `minLOD` roots are decorated as implicit 3D Tiles. */
-export function createGeodesicGridSource(
-    prepared?: IPreparedHeights,
-    options: IGridSourceOptions = {},
-): IGeodesicGridSource {
+export function createGeodesicGridSource(prepared?: IPreparedHeights, options: IGridSourceOptions = {}): IGeodesicGridSource {
     const metrics = options.metrics ?? TILE_METRICS;
     const id = options.id ?? "geodesic-grid";
     const rootsPerAxis = 2 ** metrics.minLOD;
@@ -170,14 +147,8 @@ export function createGeodesicGridSource(
     const maximumLatitudeRadians = (metrics.maxLatitude * Math.PI) / 180;
     const rootGeometricError = metrics.groundResolution(0, metrics.minLOD);
     const firstChild = children[0];
-    if (!firstChild)
-        throw new Error(
-            "The global Web Map source requires at least one root.",
-        );
-    const rootChildren: NonEmptyArray<ITile> = [
-        firstChild,
-        ...children.slice(1),
-    ];
+    if (!firstChild) throw new Error("The global Web Map source requires at least one root.");
+    const rootChildren: NonEmptyArray<ITile> = [firstChild, ...children.slice(1)];
     return {
         tileset: {
             asset: { version: "1.1" },
@@ -185,14 +156,7 @@ export function createGeodesicGridSource(
             schema,
             root: {
                 boundingVolume: {
-                    region: [
-                        -Math.PI,
-                        -maximumLatitudeRadians,
-                        Math.PI,
-                        maximumLatitudeRadians,
-                        0,
-                        0,
-                    ],
+                    region: [-Math.PI, -maximumLatitudeRadians, Math.PI, maximumLatitudeRadians, 0, 0],
                 },
                 geometricError: rootGeometricError,
                 refine: "REPLACE",
@@ -206,15 +170,11 @@ export function createGeodesicGridSource(
 }
 
 /** Address of an implicit grid tile, read from the `lod`, `x` and `y` metadata of the tile. */
-export function metadataTileAddress(tile: {
-    id: string;
-    source: ITile;
-}): ITileAddress {
+export function metadataTileAddress(tile: { id: string; source: ITile }): ITileAddress {
     const properties = tile.source.metadata?.properties;
     const coordinate = (name: "lod" | "x" | "y"): number => {
         const value = properties?.[name];
-        if (typeof value !== "number" || !Number.isSafeInteger(value))
-            throw new Error(`Tile ${tile.id} has no valid ${name} metadata.`);
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`Tile ${tile.id} has no valid ${name} metadata.`);
         return value;
     };
     return { lod: coordinate("lod"), x: coordinate("x"), y: coordinate("y") };

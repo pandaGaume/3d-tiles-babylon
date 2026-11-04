@@ -2,7 +2,7 @@ import { NeighborLod } from "@spacexr/grid";
 import { TileNeighbor } from "@spacexr/tiles";
 import { describe, expect, it } from "vitest";
 
-import { DisplayedTiles } from "../src/displayed-tiles";
+import { DisplayedTiles } from "../src/terrain/displayed-tiles";
 
 describe("DisplayedTiles", () => {
     function displayed(...keys: string[]): DisplayedTiles {
@@ -54,9 +54,7 @@ describe("DisplayedTiles", () => {
         // 3/3/2 is the level 3 ancestor of 6/24/22, the northern neighbour of 6/24/23.
         const tiles = displayed("3/3/2");
 
-        expect(
-            tiles.edgeLods({ lod: 6, x: 24, y: 23 }, "fine")[TileNeighbor.N],
-        ).toBe(NeighborLod.Coarser);
+        expect(tiles.edgeLods({ lod: 6, x: 24, y: 23 }, "fine")[TileNeighbor.N]).toBe(NeighborLod.Coarser);
     });
 
     it("counts duplicate presentations", () => {
@@ -79,15 +77,55 @@ describe("DisplayedTiles", () => {
         expect(tiles.touching(0.27, 0.27)).toEqual([{ lod: 4, x: 4, y: 4 }]);
 
         tiles.delete({ lod: 4, x: 4, y: 4 });
-        expect(tiles.touching(0.3125, 0.28125)).toEqual([
-            { lod: 5, x: 10, y: 8 },
-        ]);
+        expect(tiles.touching(0.3125, 0.28125)).toEqual([{ lod: 5, x: 10, y: 8 }]);
     });
 
     it("finds tiles touching a point across the antimeridian", () => {
         const tiles = displayed("2/3/1");
 
         expect(tiles.touching(0, 0.3)).toEqual([{ lod: 2, x: 3, y: 1 }]);
+    });
+
+    it("lists the tiles touching the boundary of a tile, and not the tiles inside it or apart", () => {
+        const tiles = displayed(
+            "5/10/10", // the tile itself
+            "3/2/2", // an ancestor
+            "5/11/11", // across the south-east corner
+            "6/19/21", // finer, across the west edge
+            "7/41/43", // a descendant along its south edge
+            "7/41/42", // a descendant strictly inside it
+            "5/12/10", // one column apart
+        );
+        const keys = (addresses: { lod: number; x: number; y: number }[]) => addresses.map(({ lod, x, y }) => `${lod}/${x}/${y}`).sort();
+
+        expect(keys(tiles.touchingBoundary({ lod: 5, x: 10, y: 10 }))).toEqual(
+            ["3/2/2", "5/10/10", "5/11/11", "6/19/21", "7/41/43"].sort(),
+        );
+    });
+
+    it("finds every tile that touching returns along the boundary", () => {
+        const tiles = displayed("4/4/4", "5/10/8", "5/10/9", "6/16/20", "5/8/10");
+        const tile = { lod: 4, x: 4, y: 4 };
+        const found = new Set(tiles.touchingBoundary(tile).map(({ lod, x, y }) => `${lod}/${x}/${y}`));
+        const steps = 64;
+        for (let step = 0; step <= steps; step++) {
+            const t = step / steps;
+            for (const [u, v] of [
+                [t, 0],
+                [1, t],
+                [t, 1],
+                [0, t],
+            ] as const)
+                for (const other of tiles.touching((tile.x + u) / 16, (tile.y + v) / 16))
+                    expect(found).toContain(`${other.lod}/${other.x}/${other.y}`);
+        }
+    });
+
+    it("finds tiles touching a boundary across the antimeridian", () => {
+        // 2/3/1 touches the west edge of 2/0/1 across the antimeridian; 2/2/1 is one column apart.
+        const tiles = displayed("2/3/1", "2/2/1");
+
+        expect(tiles.touchingBoundary({ lod: 2, x: 0, y: 1 })).toEqual([{ lod: 2, x: 3, y: 1 }]);
     });
 });
 

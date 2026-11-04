@@ -1,9 +1,4 @@
-import {
-    NeighborLod,
-    SAME_EDGE_LODS,
-    gridEdgeLods,
-    type GridEdgeLods,
-} from "@spacexr/grid";
+import { NeighborLod, SAME_EDGE_LODS, gridEdgeLods, type GridEdgeLods } from "@spacexr/grid";
 import {
     TileNeighbor,
     childTileAddresses,
@@ -23,9 +18,7 @@ import {
 export type JunctionPolicy = "fine" | "coarse" | "none";
 
 /** Children of a neighbour that touch the tile, in `childTileAddresses` order NW, NE, SW, SE. */
-const CHILDREN_FACING: Readonly<
-    Record<TileEdgeNeighbor, readonly [number, number]>
-> = {
+const CHILDREN_FACING: Readonly<Record<TileEdgeNeighbor, readonly [number, number]>> = {
     // The northern neighbour touches the tile with its southern children, and so on.
     [TileNeighbor.N]: [2, 3],
     [TileNeighbor.E]: [0, 2],
@@ -41,10 +34,30 @@ function key(address: ITileAddress): string {
 function contains(outer: ITileAddress, inner: ITileAddress): boolean {
     if (inner.lod < outer.lod) return false;
     const scale = 2 ** (inner.lod - outer.lod);
-    return (
-        Math.floor(inner.x / scale) === outer.x &&
-        Math.floor(inner.y / scale) === outer.y
-    );
+    return Math.floor(inner.x / scale) === outer.x && Math.floor(inner.y / scale) === outer.y;
+}
+
+/**
+ * Whether the closed extent of `other` touches the boundary of `tile`: they
+ * intersect, and `other` does not lie strictly inside `tile`. Both are compared
+ * in integer coordinates of the finer level; columns wrap around the antimeridian.
+ */
+function touchesBoundary(tile: ITileAddress, other: ITileAddress): boolean {
+    const lod = Math.max(tile.lod, other.lod);
+    const tileSize = 2 ** (lod - tile.lod);
+    const otherSize = 2 ** (lod - other.lod);
+    const west = tile.x * tileSize;
+    const north = tile.y * tileSize;
+    const top = other.y * otherSize;
+    if (top > north + tileSize || top + otherSize < north) return false;
+    const columns = 2 ** lod;
+    for (const shift of [0, -columns, columns]) {
+        const left = other.x * otherSize + shift;
+        if (left > west + tileSize || left + otherSize < west) continue;
+        const inside = left > west && left + otherSize < west + tileSize && top > north && top + otherSize < north + tileSize;
+        if (!inside) return true;
+    }
+    return false;
 }
 
 /**
@@ -73,8 +86,7 @@ export class DisplayedTiles {
     /** Records a presented tile; ghosts it overlaps leave. */
     public add(address: ITileAddress): void {
         const tileKey = key(address);
-        if (this.ghosts.delete(tileKey))
-            return this.removeOverlappingGhosts(address);
+        if (this.ghosts.delete(tileKey)) return this.removeOverlappingGhosts(address);
         const tracked = this.counts.has(tileKey);
         this.counts.set(tileKey, (this.counts.get(tileKey) ?? 0) + 1);
         this.addresses.set(tileKey, { ...address });
@@ -87,8 +99,7 @@ export class DisplayedTiles {
     public hide(address: ITileAddress): void {
         const tileKey = key(address);
         if (!this.counts.has(tileKey) || this.ghosts.has(tileKey)) return;
-        if (this.counts.get(tileKey)! > 1 || this.overlapsDisplayed(address))
-            this.delete(address);
+        if (this.counts.get(tileKey)! > 1 || this.overlapsDisplayed(address)) this.delete(address);
         else this.ghosts.add(tileKey);
     }
 
@@ -116,8 +127,7 @@ export class DisplayedTiles {
     private overlapsDisplayed(address: ITileAddress): boolean {
         for (const [tileKey, other] of this.addresses) {
             if (this.ghosts.has(tileKey) || tileKey === key(address)) continue;
-            if (contains(other, address) || contains(address, other))
-                return true;
+            if (contains(other, address) || contains(address, other)) return true;
         }
         return false;
     }
@@ -125,8 +135,7 @@ export class DisplayedTiles {
     private removeOverlappingGhosts(address: ITileAddress): void {
         for (const ghost of [...this.ghosts]) {
             const other = this.addresses.get(ghost)!;
-            if (contains(other, address) || contains(address, other))
-                this.delete(other);
+            if (contains(other, address) || contains(address, other)) this.delete(other);
         }
     }
 
@@ -146,12 +155,8 @@ export class DisplayedTiles {
             const column = x * count;
             const row = y * count;
             // A point on a tile boundary touches the tiles on both sides.
-            const columns = Number.isInteger(column)
-                ? [column - 1, column]
-                : [Math.floor(column)];
-            const rows = Number.isInteger(row)
-                ? [row - 1, row]
-                : [Math.floor(row)];
+            const columns = Number.isInteger(column) ? [column - 1, column] : [Math.floor(column)];
+            const rows = Number.isInteger(row) ? [row - 1, row] : [Math.floor(row)];
             const found = rows
                 .filter((candidate) => candidate >= 0 && candidate < count)
                 .flatMap((candidateRow) =>
@@ -167,13 +172,24 @@ export class DisplayedTiles {
         return result;
     }
 
+    /**
+     * Known tiles, displayed or ghost, whose closed extent touches the boundary
+     * of a tile: the tile itself, its ancestors, the tiles across its edges and
+     * corners at any level, and its descendants along its edges. They are every
+     * tile {@link touching} can return for a point of the boundary, found in one
+     * pass over the known tiles. Columns wrap around the antimeridian.
+     */
+    public touchingBoundary(address: ITileAddress): ITileAddress[] {
+        const result: ITileAddress[] = [];
+        for (const other of this.addresses.values()) if (touchesBoundary(address, other)) result.push(other);
+        return result;
+    }
+
     private countLevel(lod: number, delta: number): void {
         const count = (this.levelCounts.get(lod) ?? 0) + delta;
         if (count > 0) this.levelCounts.set(lod, count);
         else this.levelCounts.delete(lod);
-        this.sortedLevels = [...this.levelCounts.keys()].sort(
-            (left, right) => left - right,
-        );
+        this.sortedLevels = [...this.levelCounts.keys()].sort((left, right) => left - right);
     }
 
     /**
@@ -181,24 +197,15 @@ export class DisplayedTiles {
      * ancestors, or its children facing the tile. Columns wrap around the
      * antimeridian; `undefined` when nothing is displayed there.
      */
-    public lodAcross(
-        address: ITileAddress,
-        edge: TileEdgeNeighbor,
-    ): number | undefined {
+    public lodAcross(address: ITileAddress, edge: TileEdgeNeighbor): number | undefined {
         const neighbor = tileNeighborAddress(address, edge, { wrapX: true });
         if (!neighbor) return undefined;
         if (this.has(neighbor)) return neighbor.lod;
-        for (
-            let ancestor = parentTileAddress(neighbor);
-            ancestor;
-            ancestor = parentTileAddress(ancestor)
-        ) {
+        for (let ancestor = parentTileAddress(neighbor); ancestor; ancestor = parentTileAddress(ancestor)) {
             if (this.has(ancestor)) return ancestor.lod;
         }
         const children = childTileAddresses(neighbor);
-        return CHILDREN_FACING[edge].some((index) => this.has(children[index]!))
-            ? neighbor.lod + 1
-            : undefined;
+        return CHILDREN_FACING[edge].some((index) => this.has(children[index]!)) ? neighbor.lod + 1 : undefined;
     }
 
     /**
@@ -206,21 +213,14 @@ export class DisplayedTiles {
      * apart are clamped: the runtime does not balance its quadtree, so such a
      * junction keeps a small crack.
      */
-    public edgeLods(
-        address: ITileAddress,
-        policy: JunctionPolicy,
-    ): GridEdgeLods {
+    public edgeLods(address: ITileAddress, policy: JunctionPolicy): GridEdgeLods {
         if (policy === "none") return SAME_EDGE_LODS;
         return gridEdgeLods(address, (edge) => {
             const lod = this.lodAcross(address, edge);
             if (lod === undefined) return undefined;
-            const clamped = Math.min(
-                Math.max(lod, address.lod - NeighborLod.Finer),
-                address.lod + NeighborLod.Finer,
-            );
+            const clamped = Math.min(Math.max(lod, address.lod - NeighborLod.Finer), address.lod + NeighborLod.Finer);
             if (policy === "fine" && clamped > address.lod) return address.lod;
-            if (policy === "coarse" && clamped < address.lod)
-                return address.lod;
+            if (policy === "coarse" && clamped < address.lod) return address.lod;
             return clamped;
         });
     }

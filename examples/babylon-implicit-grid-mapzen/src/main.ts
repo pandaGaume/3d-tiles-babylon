@@ -9,8 +9,13 @@ import {
     BabylonRasterTileAdapter,
     BabylonRuntimeDriver,
     BabylonRuntimeMonitor,
-    MeshRasterDrape,
+    MeshTerrainEngine,
+    TILE_METRICS,
+    createGeodesicGridSource,
     createGeospatialCamera,
+    metadataTileAddress,
+    type IGridElevationOptions,
+    type ITerrainEngine,
     type IBabylonRasterPage,
     createGeospatialEngine,
     createGeospatialScene,
@@ -35,18 +40,9 @@ import {
     type IDemWorkerEndpoint,
 } from "@spacexr/dem";
 
-import {
-    BabylonGeodesicGridPipeline,
-    type IBabylonGeodesicGridHandle,
-} from "./babylon-geodesic-grid-pipeline";
 import DemDecoderWorker from "./dem-decoder.worker?worker";
 import { debugImageryTile } from "./debug-imagery";
 import { loadLocalImagery } from "./local-imagery";
-import {
-    TILE_METRICS,
-    createGeodesicGridSource,
-    metadataTileAddress,
-} from "./grid-source";
 import { clearMonitorPanel, renderMonitorPanel } from "./monitor-panel";
 
 function requiredElement<TElement extends HTMLElement>(
@@ -97,6 +93,8 @@ async function run(): Promise<void> {
     const hysteresis = Number(parameters.get("hysteresis") ?? "0.2");
     // Refined tiles wait this many frames before coarsening, so that a neighbour leaving the view does not flicker them.
     const coarsenDelay = Number(parameters.get("coarsenDelay") ?? "20");
+    // Main-thread milliseconds per frame for rebuilding grids whose neighbours changed; the rest waits for the next frames.
+    const junctionBudget = Number(parameters.get("junctionBudget") ?? "4");
     const demInterpolation = parameters.get("interpolation") ?? "cubic";
     if (
         demInterpolation !== "nearest" &&
@@ -214,9 +212,6 @@ async function run(): Promise<void> {
     }
     // Deepest drape below each terrain tile: up to 4^kmax imagery pages per tile.
     const maxDrapeDepth = Number(parameters.get("kmax") ?? "4");
-    const drape = imageryPages
-        ? new MeshRasterDrape(scene, imageryPages, { maxDepth: maxDrapeDepth })
-        : undefined;
 
     function createImageryRuntime(
         pages: BabylonRasterPages,
@@ -270,73 +265,84 @@ async function run(): Promise<void> {
         });
     }
 
-    const pipeline = new BabylonGeodesicGridPipeline(scene, tileLabels, {
-        wireframe: !solidRendering,
-        ...(drape ? { drape } : {}),
-        junctions,
-        edgeHeights,
-        ...(dem
-            ? {
-                  elevation: {
-                      pyramid: new DemPyramid({
-                          load: webDemTileLoader(
-                              dem,
-                              // PNG and elevation decoding take about 60 ms per tile; workers keep it off the render loop.
-                              new WorkerDemDecoder(
-                                  Array.from(
-                                      {
-                                          length: Math.max(
+    const elevation: IGridElevationOptions | undefined = dem
+        ? {
+              pyramid: new DemPyramid({
+                  load: webDemTileLoader(
+                      dem,
+                      // PNG and elevation decoding take about 60 ms per tile; workers keep it off the render loop.
+                      new WorkerDemDecoder(
+                          Array.from(
+                              {
+                                  length: Math.max(
+                                      1,
+                                      Math.min(
+                                          4,
+                                          (navigator.hardwareConcurrency || 2) -
                                               1,
-                                              Math.min(
-                                                  4,
-                                                  (navigator.hardwareConcurrency ||
-                                                      2) - 1,
-                                              ),
-                                          ),
-                                      },
-                                      () =>
-                                          new DemDecoderWorker() as unknown as IDemWorkerEndpoint,
+                                      ),
                                   ),
-                              ),
+                              },
+                              () =>
+                                  new DemDecoderWorker() as unknown as IDemWorkerEndpoint,
                           ),
-                          maxLOD: dem.source.metrics.maxLOD,
-                          // Room for the DEM tiles retained by the displayed cut, and for the tiles loading around it.
-                          cacheEntries: 512,
-                          // Levels below the DEM are generated down to the deepest grid level.
-                          generation: {
-                              maxLOD: TILE_METRICS.maxLOD,
-                              interpolation: demInterpolation,
-                          },
-                          // The grid covers every longitude.
-                          wrapX: true,
-                          childHeightRanges,
-                      }),
-                      verticalScale,
+                      ),
+                  ),
+                  maxLOD: dem.source.metrics.maxLOD,
+                  // Room for the DEM tiles retained by the displayed cut, and for the tiles loading around it.
+                  cacheEntries: 512,
+                  // Levels below the DEM are generated down to the deepest grid level.
+                  generation: {
+                      maxLOD: TILE_METRICS.maxLOD,
+                      interpolation: demInterpolation,
                   },
-              }
-            : {}),
-    });
+                  // The grid covers every longitude.
+                  wrapX: true,
+                  childHeightRanges,
+              }),
+              verticalScale,
+          }
+        : undefined;
+    // The engine turning terrain tiles into pixels; the runtimes, the DEM and the imagery pages stay shared.
+    const engineName = parameters.get("engine") ?? "mesh";
+    if (engineName !== "mesh")
+        throw new RangeError("The engine parameter must be mesh.");
+    const terrain: ITerrainEngine = new MeshTerrainEngine(
+        {
+            scene,
+            labelLayer: tileLabels,
+            wireframe: !solidRendering,
+            junctions,
+            edgeHeights,
+            ...(elevation ? { elevation } : {}),
+            ...(imageryPages ? { imageryPages } : {}),
+        },
+        {
+            maxDrapeDepth,
+            junctionBudgetMilliseconds: junctionBudget,
+        },
+    );
     verticalScaleInput.value = String(verticalScale);
     verticalScaleValue.value = `x${verticalScale}`;
     verticalScaleInput.disabled = !dem;
     verticalScaleInput.addEventListener("input", () => {
         verticalScale = Number(verticalScaleInput.value);
         verticalScaleValue.value = `x${verticalScale}`;
-        pipeline.setVerticalScale(verticalScale);
+        terrain.setVerticalScale(verticalScale);
     });
 
     const adapter: IRuntimeAdapter<
         IEcefCameraFrame,
         IEcefSpatialState,
-        IBabylonGeodesicGridHandle,
+        unknown,
         never
     > = {
         tilesets: { load: async () => ({ tileset: source.tileset }) },
         subtrees: new DenseImplicitSubtreeLoader(),
         implicitTiles: source.resolver,
         spatial: new EcefSpatialMetric({ geodeticSystem }),
-        activation: pipeline,
-        presentation: pipeline,
+        activation: terrain,
+        presentation: terrain,
     };
     const runtime = new TileRuntime({
         id: "implicit-grid-mapzen",
@@ -367,7 +373,7 @@ async function run(): Promise<void> {
         engine,
         scene,
         runtime.instrumentation,
-        { enabled: monitoringEnabled, resources: pipeline },
+        { enabled: monitoringEnabled, resources: terrain },
     );
     if (monitor.enabled)
         monitor.subscribe((snapshot) => renderMonitorPanel(panel, snapshot));
@@ -401,17 +407,19 @@ async function run(): Promise<void> {
     (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = {
         runtime,
         imageryRuntime,
-        pipeline,
-        drape,
+        terrain,
+        // Parts of the mesh engine, for the probes written against it.
+        ...(terrain instanceof MeshTerrainEngine
+            ? { pipeline: terrain.grids, drape: terrain.drape }
+            : {}),
         imageryPages,
     };
 
     engine.runRenderLoop(() => {
-        pipeline.updateJunctions();
-        drape?.update();
+        terrain.beforeRender();
         scene.render();
         monitor.update();
-        pipeline.updateDebugLabels();
+        terrain.afterRender();
     });
 
     const resize = (): void => engine.resize();
@@ -425,10 +433,10 @@ async function run(): Promise<void> {
             unsubscribeEvents();
             void runtime.dispose();
             void imageryRuntime?.dispose();
-            drape?.dispose();
+            // The engine releases its imagery bindings before the pages they read.
+            terrain.dispose();
             imageryPages?.dispose();
             monitor.dispose();
-            pipeline.dispose();
             scene.dispose();
             engine.dispose();
         },

@@ -17,13 +17,8 @@
         "paths": {
             "@spacexr/3d-tiles-babylon": ["../../packages/core/src/index.ts"]
         },
-        "types": ["vite/client", "vitest/globals"],
+        "types": ["vite/client"],
         "preserveSymlinks": true
     },
-    "include": [
-        "src/**/*.ts",
-        "tests/**/*.ts",
-        "vite.config.ts",
-        "vitest.config.ts"
-    ]
+    "include": ["src/**/*.ts", "vite.config.ts"]
 }

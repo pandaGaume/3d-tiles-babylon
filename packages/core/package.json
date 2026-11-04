@@ -1,7 +1,7 @@
 {
     "name": "@spacexr/3d-tiles-babylon",
     "version": "0.1.0",
-    "description": "Babylon.js adaptation of the renderer-neutral SpaceXR 3D Tiles runtime: ECEF camera frames, geospatial camera, render loop driver, glTF content and monitoring.",
+    "description": "Babylon.js adaptation of the renderer-neutral SpaceXR 3D Tiles runtime: ECEF camera frames, geospatial camera, render loop driver, glTF content, terrain engines and monitoring.",
     "type": "module",
     "license": "Apache-2.0",
     "author": "Guillaume Pelletier (SpaceXR)",
@@ -66,7 +66,9 @@
     "dependencies": {
         "@spacexr/3d-tiles-core": "0.1.0",
         "@spacexr/3d-tiles-runtime": "0.1.0",
+        "@spacexr/dem": "0.1.0",
         "@spacexr/geodesy": "0.4.0",
+        "@spacexr/grid": "0.1.0",
         "@spacexr/raster": "0.1.0",
         "@spacexr/tiles": "0.1.0"
     },

@@ -53,17 +53,10 @@ export function projectGridTopologyToEllipsoid(
     system: GeodeticSystem = GeodeticSystem.WGS84,
     options: IProjectGridOptions = {},
 ): IEllipsoidTileGeometry {
-    if (region.length < 6)
-        throw new RangeError("A 3D Tiles region must contain six values.");
+    if (region.length < 6) throw new RangeError("A 3D Tiles region must contain six values.");
 
     const [west, south, east, north, minimumHeight] = region;
-    if (
-        west === undefined ||
-        south === undefined ||
-        east === undefined ||
-        north === undefined ||
-        minimumHeight === undefined
-    )
+    if (west === undefined || south === undefined || east === undefined || north === undefined || minimumHeight === undefined)
         throw new RangeError("The 3D Tiles region is incomplete.");
 
     const mercator = options.latitudeInterpolation === "mercator";
@@ -73,28 +66,15 @@ export function projectGridTopologyToEllipsoid(
     const scratch = { x: 0, y: 0, z: 0 };
     let positionOffset = 0;
 
-    for (
-        let coordinateOffset = 0;
-        coordinateOffset < topology.coordinates.length;
-        coordinateOffset += 2
-    ) {
+    for (let coordinateOffset = 0; coordinateOffset < topology.coordinates.length; coordinateOffset += 2) {
         const u = topology.coordinates[coordinateOffset]!;
         const v = topology.coordinates[coordinateOffset + 1]!;
         const longitude = west + (east - west) * u;
         const latitude = mercator
-            ? 2 *
-                  Math.atan(
-                      Math.exp(
-                          northOrdinate + (southOrdinate - northOrdinate) * v,
-                      ),
-                  ) -
-              Math.PI / 2
+            ? 2 * Math.atan(Math.exp(northOrdinate + (southOrdinate - northOrdinate) * v)) - Math.PI / 2
             : north + (south - north) * v;
         const sampledHeight = options.heightAt?.(u, v);
-        const height =
-            sampledHeight === undefined || Number.isNaN(sampledHeight)
-                ? minimumHeight
-                : sampledHeight;
+        const height = sampledHeight === undefined || Number.isNaN(sampledHeight) ? minimumHeight : sampledHeight;
         system.geodeticRadiansToEcef(latitude, longitude, height, scratch);
         positions[positionOffset++] = scratch.x;
         positions[positionOffset++] = scratch.y;
@@ -137,12 +117,7 @@ export function projectElevatedGrid(
     system: GeodeticSystem = GeodeticSystem.WGS84,
 ): IElevatedGridGeometry {
     const [west, south, east, north] = region;
-    if (
-        west === undefined ||
-        south === undefined ||
-        east === undefined ||
-        north === undefined
-    )
+    if (west === undefined || south === undefined || east === undefined || north === undefined)
         throw new RangeError("The 3D Tiles region is incomplete.");
 
     const vertexCount = topology.coordinates.length / 2;
@@ -158,14 +133,7 @@ export function projectElevatedGrid(
         const u = topology.coordinates[vertex * 2]!;
         const v = topology.coordinates[vertex * 2 + 1]!;
         const longitude = west + (east - west) * u;
-        const latitude =
-            2 *
-                Math.atan(
-                    Math.exp(
-                        northOrdinate + (southOrdinate - northOrdinate) * v,
-                    ),
-                ) -
-            Math.PI / 2;
+        const latitude = 2 * Math.atan(Math.exp(northOrdinate + (southOrdinate - northOrdinate) * v)) - Math.PI / 2;
         system.geodeticRadiansToEcef(latitude, longitude, 0, point);
         system.geodeticSurfaceNormalRadians(latitude, longitude, normal);
         base.set([point.x, point.y, point.z], vertex * 3);
@@ -196,8 +164,7 @@ export function composeElevatedPositions(
         const offset = Number.isNaN(height) ? fallbackHeight : height * scale;
         for (let axis = 0; axis < 3; axis++) {
             const index = vertex * 3 + axis;
-            target[index] =
-                geometry.base[index]! + geometry.up[index]! * offset;
+            target[index] = geometry.base[index]! + geometry.up[index]! * offset;
         }
     }
     return target;

@@ -2,14 +2,10 @@ import { GeodeticSystem } from "@spacexr/geodesy";
 import { createGridTopology } from "@spacexr/grid";
 import { describe, expect, it } from "vitest";
 
-import { projectGridTopologyToEllipsoid } from "../src/geodesic-grid-geometry";
-import { createGeodesicGridSource, TILE_METRICS } from "../src/grid-source";
+import { projectGridTopologyToEllipsoid } from "../src/terrain/mesh/geodesic-grid-geometry";
+import { createGeodesicGridSource, TILE_METRICS } from "../src/terrain/grid-source";
 
-function distance(
-    positions: readonly number[],
-    firstVertex: number,
-    secondVertex: number,
-): number {
+function distance(positions: readonly number[], firstVertex: number, secondVertex: number): number {
     const first = firstVertex * 3;
     const second = secondVertex * 3;
     return Math.hypot(
@@ -22,10 +18,7 @@ function distance(
 describe("geodesic grid geometry", () => {
     function sourceAt(x: number, y: number) {
         const source = createGeodesicGridSource();
-        const dataSource = source.dataSources.find(
-            (candidate) =>
-                candidate.rootAddress.x === x && candidate.rootAddress.y === y,
-        );
+        const dataSource = source.dataSources.find((candidate) => candidate.rootAddress.x === x && candidate.rootAddress.y === y);
         if (!dataSource) throw new Error(`Missing root source ${x}/${y}.`);
         return { source, dataSource };
     }
@@ -37,9 +30,7 @@ describe("geodesic grid geometry", () => {
         expect(dataSource.metrics).toBe(TILE_METRICS);
         expect(dataSource.metrics.minLOD).toBe(3);
         expect(dataSource.metrics.maxLOD).toBe(18);
-        expect(
-            source.tileset.root.children?.[20]?.implicitTiling?.availableLevels,
-        ).toBe(16);
+        expect(source.tileset.root.children?.[20]?.implicitTiling?.availableLevels).toBe(16);
         expect(dataSource.addressOf({ level: 0, x: 0, y: 0 })).toEqual({
             lod: 3,
             x: 4,
@@ -55,18 +46,12 @@ describe("geodesic grid geometry", () => {
             x: 9,
             y: 4,
         });
-        expect(() => dataSource.addressOf({ level: 16, x: 0, y: 0 })).toThrow(
-            /maxLOD 18/,
-        );
+        expect(() => dataSource.addressOf({ level: 16, x: 0, y: 0 })).toThrow(/maxLOD 18/);
     });
 
     it("covers the complete WebMercator domain with independent LOD 3 roots", () => {
         const source = createGeodesicGridSource();
-        const rootKeys = new Set(
-            source.dataSources.map(
-                ({ rootAddress }) => `${rootAddress.x}/${rootAddress.y}`,
-            ),
-        );
+        const rootKeys = new Set(source.dataSources.map(({ rootAddress }) => `${rootAddress.x}/${rootAddress.y}`));
         const region = source.tileset.root.boundingVolume.region;
 
         expect(source.dataSources).toHaveLength(64);
@@ -76,29 +61,17 @@ describe("geodesic grid geometry", () => {
         expect(rootKeys.has("7/7")).toBe(true);
         expect(region?.[0]).toBeCloseTo(-Math.PI);
         expect(region?.[2]).toBeCloseTo(Math.PI);
-        expect(region?.[1]).toBeCloseTo(
-            (-TILE_METRICS.maxLatitude * Math.PI) / 180,
-        );
-        expect(region?.[3]).toBeCloseTo(
-            (TILE_METRICS.maxLatitude * Math.PI) / 180,
-        );
-        expect(
-            source.tileset.root.children?.every(
-                (child) => child.implicitTiling?.availableLevels === 16,
-            ),
-        ).toBe(true);
+        expect(region?.[1]).toBeCloseTo((-TILE_METRICS.maxLatitude * Math.PI) / 180);
+        expect(region?.[3]).toBeCloseTo((TILE_METRICS.maxLatitude * Math.PI) / 180);
+        expect(source.tileset.root.children?.every((child) => child.implicitTiling?.availableLevels === 16)).toBe(true);
     });
 
     it("maps implicit X to longitude and implicit Y to latitude without an axis rotation", () => {
         const { dataSource } = sourceAt(4, 2);
-        const root = dataSource.resolve({ level: 0, x: 0, y: 0 }).boundingVolume
-            .region!;
-        const southWest = dataSource.resolve({ level: 1, x: 0, y: 0 })
-            .boundingVolume.region!;
-        const southEast = dataSource.resolve({ level: 1, x: 1, y: 0 })
-            .boundingVolume.region!;
-        const northWest = dataSource.resolve({ level: 1, x: 0, y: 1 })
-            .boundingVolume.region!;
+        const root = dataSource.resolve({ level: 0, x: 0, y: 0 }).boundingVolume.region!;
+        const southWest = dataSource.resolve({ level: 1, x: 0, y: 0 }).boundingVolume.region!;
+        const southEast = dataSource.resolve({ level: 1, x: 1, y: 0 }).boundingVolume.region!;
+        const northWest = dataSource.resolve({ level: 1, x: 0, y: 1 }).boundingVolume.region!;
 
         expect(southWest[0]).toBeCloseTo(root[0]);
         expect(southEast[0]).toBeCloseTo(southWest[2]);
@@ -113,17 +86,12 @@ describe("geodesic grid geometry", () => {
 
         expect(topology.coordinates).toHaveLength(18);
         expect(topology.indices).toHaveLength(24);
-        expect([...topology.coordinates.slice(0, 6)]).toEqual([
-            0, 0, 0.5, 0, 1, 0,
-        ]);
+        expect([...topology.coordinates.slice(0, 6)]).toEqual([0, 0, 0.5, 0, 1, 0]);
     });
 
     it("projects unique ellipsoid geometry and preserves shared topology", () => {
         const topology = createGridTopology(2);
-        const geometry = projectGridTopologyToEllipsoid(
-            topology,
-            [0, 0, 0.1, 0.1, 0, 500],
-        );
+        const geometry = projectGridTopologyToEllipsoid(topology, [0, 0, 0.1, 0.1, 0, 500]);
 
         expect(geometry.positions).toHaveLength(27);
         expect(geometry.indices).toBe(topology.indices);
@@ -134,26 +102,10 @@ describe("geodesic grid geometry", () => {
         const topology = createGridTopology(1);
         const longitudeSpan = 0.05;
         const latitudeSpan = 0.01;
-        const equatorial = projectGridTopologyToEllipsoid(topology, [
-            0,
-            -latitudeSpan,
-            longitudeSpan,
-            0,
-            0,
-            0,
-        ]);
-        const highLatitude = projectGridTopologyToEllipsoid(topology, [
-            0,
-            Math.PI / 3 - latitudeSpan,
-            longitudeSpan,
-            Math.PI / 3,
-            0,
-            0,
-        ]);
+        const equatorial = projectGridTopologyToEllipsoid(topology, [0, -latitudeSpan, longitudeSpan, 0, 0, 0]);
+        const highLatitude = projectGridTopologyToEllipsoid(topology, [0, Math.PI / 3 - latitudeSpan, longitudeSpan, Math.PI / 3, 0, 0]);
 
-        expect(distance(highLatitude.positions, 0, 1)).toBeLessThan(
-            distance(equatorial.positions, 0, 1) * 0.6,
-        );
+        expect(distance(highLatitude.positions, 0, 1)).toBeLessThan(distance(equatorial.positions, 0, 1) * 0.6);
     });
 
     it("displaces vertices with sampled heights on Web Mercator rows", () => {
@@ -161,16 +113,10 @@ describe("geodesic grid geometry", () => {
         const north = (60 * Math.PI) / 180;
         const south = 0;
         const region = [0, south, 0.1, north, 0, 0];
-        const geometry = projectGridTopologyToEllipsoid(
-            topology,
-            region,
-            GeodeticSystem.WGS84,
-            {
-                heightAt: (u, v) =>
-                    u === 0.5 && v === 0.5 ? Number.NaN : 1000 * u + 10 * v,
-                latitudeInterpolation: "mercator",
-            },
-        );
+        const geometry = projectGridTopologyToEllipsoid(topology, region, GeodeticSystem.WGS84, {
+            heightAt: (u, v) => (u === 0.5 && v === 0.5 ? Number.NaN : 1000 * u + 10 * v),
+            latitudeInterpolation: "mercator",
+        });
         const geodetic = (vertex: number) =>
             GeodeticSystem.WGS84.ecefToGeodeticRadians({
                 x: geometry.positions[vertex * 3]!,
@@ -181,12 +127,7 @@ describe("geodesic grid geometry", () => {
         // Vertex 2 is the north-east corner (u = 1, v = 0).
         expect(geodetic(2).height).toBeCloseTo(1000, 6);
         // The middle row lies at the Web Mercator midpoint, north of the geodetic midpoint.
-        const mercatorMiddle =
-            2 *
-                Math.atan(
-                    Math.exp(Math.log(Math.tan(Math.PI / 4 + north / 2)) / 2),
-                ) -
-            Math.PI / 2;
+        const mercatorMiddle = 2 * Math.atan(Math.exp(Math.log(Math.tan(Math.PI / 4 + north / 2)) / 2)) - Math.PI / 2;
         expect(geodetic(3).latitude).toBeCloseTo(mercatorMiddle, 9);
         expect(mercatorMiddle).toBeGreaterThan(north / 2);
         // A missing height falls back to the region minimum height.
