@@ -2,6 +2,7 @@ import type { IMetadataEntity, IMetadataSchema, ITile, ITileset, NonEmptyArray }
 import {
     createWebMapImplicitSource,
     type ImplicitTilesetDecorator,
+    type IImplicitSubtreeGraft,
     type IImplicitTileAddressContext,
     type IImplicitTileResolveContext,
     type IImplicitTileResolver,
@@ -64,11 +65,24 @@ export interface IPreparedHeights {
     verticalScale: () => number;
 }
 
+function addressKey(address: ITileAddress): string {
+    return `${address.lod}/${address.x}/${address.y}`;
+}
+
 class GeodesicGridImplicitResolver implements IImplicitTileResolver {
     public constructor(
         private readonly decoratorsByRoot: ReadonlyMap<ITile, ImplicitTilesetDecorator>,
         private readonly prepared: IPreparedHeights | undefined,
+        /** Root tiles of the registered subtrees, by the address of their root. */
+        private readonly subtreeRoots: ReadonlyMap<string, ITile> = new Map(),
     ) {}
+
+    /** The registered subtree rooted at a tile, resolved by this resolver like the rest of the grid. */
+    public subtreeAt(context: IImplicitTileAddressContext): IImplicitSubtreeGraft | undefined {
+        if (this.subtreeRoots.size === 0) return undefined;
+        const tile = this.subtreeRoots.get(addressKey(this.addressOf(context)));
+        return tile ? { tile, resolver: this } : undefined;
+    }
 
     /** Address in the global Web Mercator pyramid, so that the runtime balances the quadtree across roots. */
     public addressOf(context: IImplicitTileAddressContext): ITileAddress {
@@ -107,11 +121,27 @@ class GeodesicGridImplicitResolver implements IImplicitTileResolver {
     }
 }
 
+/** A subtree of the grid with its own levels, from its root tile down. */
+export interface IGridSubtree {
+    /** Root tile of the subtree, in the XYZ convention. */
+    root: ITileAddress;
+    /**
+     * Deepest level of the subtree: shallower than the grid to stop the refinement there, deeper to refine further.
+     * Equal to `root.lod` keeps the root tile as a leaf.
+     */
+    maxLOD: number;
+}
+
 export interface IGridSourceOptions {
     /** Pyramid levels and tile size. Defaults to the terrain grid metrics. */
     metrics?: WebMercatorTileMetrics;
     /** Prefix of the data source identifiers. Defaults to `geodesic-grid`. */
     id?: string;
+    /**
+     * Subtrees with their own levels, registered with the runtime as implicit subtrees: from each root down, the grid
+     * follows the subtree. The deepest subtree containing a tile wins.
+     */
+    subtrees?: readonly IGridSubtree[];
 }
 
 /** Creates a global Web Map forest whose `minLOD` roots are decorated as implicit 3D Tiles. */
@@ -122,22 +152,43 @@ export function createGeodesicGridSource(prepared?: IPreparedHeights, options: I
     const children: ITile[] = [];
     const dataSources: WebMapTileDataSource[] = [];
     const decoratorsByRoot = new Map<ITile, ImplicitTilesetDecorator>();
+    const createSource = (sourceId: string, rootAddress: ITileAddress, sourceMetrics: WebMercatorTileMetrics) =>
+        createWebMapImplicitSource({
+            id: sourceId,
+            urlTemplates: `${id}://tile/{z}/{x}/{y}`,
+            metrics: sourceMetrics,
+            rootAddress,
+            subtreeLevels: 4,
+            // Tiles start flat; the DEM loaded with each tile reports its measured height range.
+            minimumHeight: 0,
+            maximumHeight: 0,
+            refine: "REPLACE",
+            tileMetadata,
+            contentMetadata: tileMetadata,
+        });
+
+    // Registered subtrees: a source per subtree, whose root replaces the tile at its address.
+    const subtreeRoots = new Map<string, ITile>();
+    for (const subtree of options.subtrees ?? []) {
+        const { root, maxLOD } = subtree;
+        if (!Number.isInteger(maxLOD) || maxLOD < root.lod)
+            throw new RangeError(`The subtree at ${addressKey(root)} must end at or below its root level.`);
+        const subtreeMetrics = new WebMercatorTileMetrics({ minLOD: root.lod, maxLOD, tileSize: metrics.tileSize });
+        const source = createSource(`${id}-subtree-${root.lod}-${root.x}-${root.y}`, root, subtreeMetrics);
+        subtreeRoots.set(addressKey(root), source.tileset.root);
+        dataSources.push(source.dataSource);
+        decoratorsByRoot.set(source.tileset.root, source.decorator);
+    }
 
     for (let y = 0; y < rootsPerAxis; y++) {
         for (let x = 0; x < rootsPerAxis; x++) {
-            const source = createWebMapImplicitSource({
-                id: `${id}-${x}-${y}`,
-                urlTemplates: `${id}://tile/{z}/{x}/{y}`,
-                metrics,
-                rootAddress: { lod: metrics.minLOD, x, y },
-                subtreeLevels: 4,
-                // Tiles start flat; the DEM loaded with each tile reports its measured height range.
-                minimumHeight: 0,
-                maximumHeight: 0,
-                refine: "REPLACE",
-                tileMetadata,
-                contentMetadata: tileMetadata,
-            });
+            // A subtree registered at a root of the forest takes its place.
+            const registered = subtreeRoots.get(addressKey({ lod: metrics.minLOD, x, y }));
+            if (registered) {
+                children.push(registered);
+                continue;
+            }
+            const source = createSource(`${id}-${x}-${y}`, { lod: metrics.minLOD, x, y }, metrics);
             children.push(source.tileset.root);
             dataSources.push(source.dataSource);
             decoratorsByRoot.set(source.tileset.root, source.decorator);
@@ -163,7 +214,7 @@ export function createGeodesicGridSource(prepared?: IPreparedHeights, options: I
                 children: rootChildren,
             },
         },
-        resolver: new GeodesicGridImplicitResolver(decoratorsByRoot, prepared),
+        resolver: new GeodesicGridImplicitResolver(decoratorsByRoot, prepared, subtreeRoots),
         dataSources,
         metrics,
     };

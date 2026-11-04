@@ -12,6 +12,7 @@ It demonstrates:
 - large-world floating-origin rendering for Earth-scale coordinates;
 - frustum, horizon and local-area culling;
 - renderer attachment, detachment and cache disposal;
+- camera rotation without reloading, with the navigation defaults of the runtime; the example only sets its memory budgets;
 - real-time runtime statistics;
 - aggregation of the copyright fields from every displayed GLB tile.
 
