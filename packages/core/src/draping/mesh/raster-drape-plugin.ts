@@ -1,4 +1,5 @@
 import type { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine.js";
+import { ShaderLanguage } from "@babylonjs/core/Materials/shaderLanguage.js";
 import { MaterialDefines } from "@babylonjs/core/Materials/materialDefines.js";
 import { MaterialPluginBase } from "@babylonjs/core/Materials/materialPluginBase.js";
 import type { Material } from "@babylonjs/core/Materials/material.js";
@@ -66,9 +67,12 @@ export class RasterDrapeMaterialPlugin extends MaterialPluginBase {
         this.markAllDefinesAsDirty();
     }
 
-    public override isCompatible(): boolean {
-        // Texture arrays need WebGL 2.
-        return this._material.getScene().getEngine().getCaps().texture2DArrayMaxLayerCount > 0;
+    /**
+     * The drape is written in GLSL, kept for the browsers without WebGPU: on WebGPU, its material must use GLSL
+     * (`forceGLSL`), which Babylon converts to WGSL. Texture arrays need WebGL 2 or WebGPU.
+     */
+    public override isCompatible(shaderLanguage: ShaderLanguage = ShaderLanguage.GLSL): boolean {
+        return shaderLanguage === ShaderLanguage.GLSL && this._material.getScene().getEngine().getCaps().texture2DArrayMaxLayerCount > 0;
     }
 
     public override prepareDefinesBeforeAttributes(defines: MaterialDefines): void {
@@ -128,7 +132,9 @@ vec4 rasterDrapeColor(vec2 tile) {
     float texels = float(textureSize(drapePages, 0).x);
     vec2 page = entry.yz + (tile * cells - cell) * entry.w;
     vec2 coordinates = (page * (texels - 1.0) + 0.5) / texels;
-    return vec4(texture(drapePages, vec3(coordinates, entry.x)).rgb, 1.0);
+    // Pages have no mipmaps: an explicit level keeps the same colour and, unlike an implicit one, is allowed in the
+    // non-uniform control flow of WGSL once Babylon converts this shader for WebGPU.
+    return vec4(textureLod(drapePages, vec3(coordinates, entry.x), 0.0).rgb, 1.0);
 }
 #endif`,
                 CUSTOM_FRAGMENT_UPDATE_DIFFUSE: `#if defined(RASTERDRAPE) && defined(UV1)

@@ -1,4 +1,4 @@
-import { VertexBuffer } from "@babylonjs/core/Buffers/buffer.js";
+import { Buffer, type VertexBuffer } from "@babylonjs/core/Buffers/buffer.js";
 import type { Material } from "@babylonjs/core/Materials/material.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData.js";
@@ -41,14 +41,21 @@ export function refinedGridTopology(cells: number): IGridTopology {
     });
 }
 
+/** Floats per instance in the interleaved instance buffer. */
+const INSTANCE_STRIDE = INSTANCE_ATTRIBUTES.length * 4;
+
 /**
- * One predefined grid drawn once per instance: a Babylon mesh whose instance attributes are vertex buffers with a
- * divisor of one, drawn with `forcedInstanceCount`. `position` holds the `u, v` of each vertex.
+ * One predefined grid drawn once per instance: a Babylon mesh drawn with `forcedInstanceCount`, whose instance
+ * attributes are interleaved in one vertex buffer with a divisor of one. `position` holds the `u, v` of each vertex.
+ * WebGPU devices may only bind 8 vertex buffers to a pipeline: two buffers, the grid and the instances, fit any of
+ * them.
  */
 export class InstancedGrid {
     public readonly mesh: Mesh;
     private readonly data = new Map<InstanceAttribute, Float32Array>();
-    private readonly buffers = new Map<InstanceAttribute, VertexBuffer>();
+    private interleaved = new Float32Array(0);
+    private buffer: Buffer | undefined;
+    private readonly vertexBuffers: VertexBuffer[] = [];
     private capacity = 0;
     private instances = 0;
 
@@ -82,7 +89,7 @@ export class InstancedGrid {
         return this.instances;
     }
 
-    /** Bytes of the instance buffers. */
+    /** Bytes of the instance buffer. */
     public get gpuBytes(): number {
         return this.capacity * INSTANCE_ATTRIBUTES.length * 16;
     }
@@ -100,28 +107,47 @@ export class InstancedGrid {
         this.mesh.setEnabled(count > 0);
     }
 
-    /** Uploads the values of attributes after they were written. */
+    /** Uploads the values of attributes after they were written, interleaved with the others. */
     public upload(...names: readonly InstanceAttribute[]): void {
-        for (const name of names) this.buffers.get(name)!.updateDirectly(this.data.get(name)!, 0);
+        for (const name of names) {
+            const values = this.data.get(name)!;
+            const start = INSTANCE_ATTRIBUTES.indexOf(name) * 4;
+            for (let instance = 0; instance < this.instances; instance++) {
+                const from = instance * 4;
+                const to = instance * INSTANCE_STRIDE + start;
+                this.interleaved[to] = values[from]!;
+                this.interleaved[to + 1] = values[from + 1]!;
+                this.interleaved[to + 2] = values[from + 2]!;
+                this.interleaved[to + 3] = values[from + 3]!;
+            }
+        }
+        this.buffer?.updateDirectly(this.interleaved, 0);
     }
 
     public dispose(): void {
-        for (const buffer of this.buffers.values()) buffer.dispose();
+        for (const vertexBuffer of this.vertexBuffers) vertexBuffer.dispose();
+        this.buffer?.dispose();
         this.mesh.dispose();
     }
 
     private reserve(capacity: number): void {
-        const engine = this.scene.getEngine();
         for (const name of INSTANCE_ATTRIBUTES) {
             const data = new Float32Array(capacity * 4);
             const previous = this.data.get(name);
             if (previous) data.set(previous);
             this.data.set(name, data);
-            this.buffers.get(name)?.dispose();
-            const buffer = new VertexBuffer(engine, data, name, { updatable: true, stride: 4, size: 4, instanced: true, divisor: 1 });
-            this.buffers.set(name, buffer);
-            this.mesh.setVerticesBuffer(buffer);
         }
+        const interleaved = new Float32Array(capacity * INSTANCE_STRIDE);
+        interleaved.set(this.interleaved);
+        this.interleaved = interleaved;
+        for (const vertexBuffer of this.vertexBuffers.splice(0)) vertexBuffer.dispose();
+        this.buffer?.dispose();
+        this.buffer = new Buffer(this.scene.getEngine(), interleaved, true, INSTANCE_STRIDE, false, true, false, 1);
+        INSTANCE_ATTRIBUTES.forEach((name, index) => {
+            const vertexBuffer = this.buffer!.createVertexBuffer(name, index * 4, 4, INSTANCE_STRIDE, true, false, 1);
+            this.vertexBuffers.push(vertexBuffer);
+            this.mesh.setVerticesBuffer(vertexBuffer);
+        });
         this.capacity = capacity;
     }
 }

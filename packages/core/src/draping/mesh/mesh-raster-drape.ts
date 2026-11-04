@@ -78,8 +78,9 @@ export class MeshRasterDrape implements IMeshRasterDrapeSource {
         const cells = 2 ** this.maxDepth;
         this.table = new Float32Array(cells * cells * 4);
         this.tables = new TextureArrayPool(scene, { size: cells, format: "rgba32f", initialLayers: 128 });
-        // Float layers are not copied when the pool grows: every table is written again.
-        this.growObserver = this.tables.onGrowObservable.add(() => {
+        // Float layers are not copied when a WebGL 2 pool grows: every table is written again.
+        this.growObserver = this.tables.onGrowObservable.add((pool) => {
+            if (pool.layersKeptOnGrowth) return;
             for (const draped of this.meshes.values()) draped.dirty = true;
             this.dirty = true;
         });

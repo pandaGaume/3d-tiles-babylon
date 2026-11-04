@@ -42,8 +42,9 @@ export class ElevationPages {
                     if (page) this.write(page);
                 }
             }) ?? (() => undefined);
-        // Float layers are not copied when the pool grows: write every page again.
-        this.growObserver = this.pool.onGrowObservable.add(() => {
+        // Float layers are not copied when a WebGL 2 pool grows: write every page again.
+        this.growObserver = this.pool.onGrowObservable.add((pool) => {
+            if (pool.layersKeptOnGrowth) return;
             for (const page of this.pages.values()) this.write(page);
         });
     }

@@ -526,7 +526,8 @@ export class BabylonGeodesicGridPipeline
         if (existing) return existing;
 
         const color = Color3.FromHexString(lodColor(lod));
-        const material = new StandardMaterial(`geodesic-grid-material-lod-${lod}`, this.scene);
+        // The drape plugin is written in GLSL: on WebGPU, Babylon converts the whole material to WGSL.
+        const material = new StandardMaterial(`geodesic-grid-material-lod-${lod}`, this.scene, this.drape !== undefined);
         material.specularColor = Color3.Black();
         if (this.wireframe) {
             material.diffuseColor = color.scale(0.55);
