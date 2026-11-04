@@ -29,6 +29,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `GpuTerrainEngine` renders terrain on the GPU, selected in the implicit grid example with `engine=gpu`: one predefined grid refined on its edges, as in SpaceXR, instanced once per tile of the `DrapeInstanceCut` and drawn in one draw call, sized and placed by instance attributes, joined to its neighbours without cracks and without skirts, with positions from double-precision shapes per tile row (`GridShapes`) and heights from 32-bit float elevation pages (`ElevationPages`). `TextureArrayPool` accepts the `r32f` format. The render loop drops from 7.3 to 3.1 ms at the 90th percentile on the same navigation. The camera picks a coarse surface of the terrain tiles that is never drawn (`PickSurface`), and the terrain is lit like the standard material of the mesh engine, by the first directional and hemispheric lights of the scene.
 - `createGeodesicGridSource` accepts `subtrees`, grid subtrees with their own levels registered with the runtime, and the implicit grid example sets them with the `subtrees` URL parameter.
 
+- `createGeospatialWebGPUEngine` and `createGeospatialRendererEngine` create a WebGPU engine with large world rendering and the maximum limits of the adapter, falling back to WebGL where the browser lacks WebGPU. Shaders stay in GLSL, converted to WGSL by Babylon on WebGPU. Both examples take a `renderer=webgpu` URL parameter.
+
 ### Changed
 
 - The Google example uses the split activation and presentation ports instead of the legacy content adapter, and detects external tilesets from the payload instead of the media type or `.json` extension.
@@ -44,6 +46,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- The example dev servers serve the dependencies Vite pre-bundles with `Cache-Control: no-store`. Vite marks them immutable for a year, but `vite --force` rebuilds them at every start: a browser keeping the chunks of an earlier session mixed two builds of Babylon.js in one page, whose shader includes went missing, and Babylon compiled the HTML page it fetched in their place.
 - Turning the camera in the Google example no longer reloads the tiles it just saw. The cause was in the runtime defaults, fixed in 3d-tiles-core: a cache retention of 120 runtime frames, about 6 seconds while the camera turns, and 256 cached contents. The examples now only set their memory budgets and the parameters of their tilesets.
 
 - The example dev servers start with `vite --force`: Vite serves the packages linked from 3d-tiles-core with a version query that a restart alone does not change, so browsers kept running the previous build of a rebuilt package from their cache.

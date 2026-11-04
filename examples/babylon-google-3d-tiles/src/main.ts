@@ -9,7 +9,7 @@ import {
     BabylonRuntimeDriver,
     CopyrightAttributions,
     createGeospatialCamera,
-    createGeospatialEngine,
+    createGeospatialRendererEngine,
     createGeospatialScene,
     type IBabylonGltfTileHandle,
 } from "@spacexr/3d-tiles-babylon";
@@ -47,7 +47,9 @@ async function run(): Promise<void> {
     const statistics = requiredElement("runtime-statistics", HTMLSpanElement);
     const dataAttribution = requiredElement("data-attribution", HTMLSpanElement);
 
-    const engine = createGeospatialEngine(canvas);
+    // `?renderer=webgpu` renders with WebGPU where the browser supports it, WebGL otherwise.
+    const requestedRenderer = new URLSearchParams(window.location.search).get("renderer") === "webgpu" ? "webgpu" : "webgl";
+    const { engine, renderer } = await createGeospatialRendererEngine(canvas, requestedRenderer);
     const scene = createGeospatialScene(engine, { clearColor: new Color4(0.027, 0.082, 0.176, 1) });
 
     const geodeticSystem = GeodeticSystem.WGS84;
@@ -111,11 +113,11 @@ async function run(): Promise<void> {
     });
     status.textContent = "Loading Google Photorealistic 3D Tiles...";
     await driver.start();
-    status.textContent = `${config.latitudeDegrees.toFixed(4)}, ${config.longitudeDegrees.toFixed(4)}`;
+    status.textContent = `${config.latitudeDegrees.toFixed(4)}, ${config.longitudeDegrees.toFixed(4)} | ${renderer === "webgpu" ? "WebGPU" : "WebGL"}`;
     engine.runRenderLoop(() => scene.render());
 
     // Objects of the example, for probes run from the browser console.
-    (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = { runtime, scene, camera };
+    (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = { runtime, scene, camera, renderer };
 
     const resize = (): void => engine.resize();
     window.addEventListener("resize", resize);

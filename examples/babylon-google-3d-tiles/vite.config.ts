@@ -1,6 +1,27 @@
 import { fileURLToPath } from "node:url";
 
-import { defineConfig, loadEnv, type ProxyOptions } from "vite";
+import { defineConfig, loadEnv, type Plugin, type ProxyOptions } from "vite";
+
+/**
+ * Serves the dependencies Vite pre-bundles without browser caching. Vite marks them immutable for a year, but the dev
+ * server starts with `--force` and rebuilds them every time: a browser keeping the chunks of an earlier session mixed
+ * two builds of Babylon.js in one page, whose shader includes then went missing.
+ */
+function noStoreDependencies(): Plugin {
+    return {
+        name: "no-store-dependencies",
+        configureServer(server) {
+            server.middlewares.use((request, response, next) => {
+                if (request.url?.includes("/node_modules/.vite/")) {
+                    const setHeader = response.setHeader.bind(response);
+                    response.setHeader = ((name: string, value: number | string | readonly string[]) =>
+                        setHeader(name, name.toLowerCase() === "cache-control" ? "no-store" : value)) as typeof response.setHeader;
+                }
+                next();
+            });
+        },
+    };
+}
 
 const GOOGLE_TILES_PROXY_PREFIX = "/google-3d-tiles";
 const GOOGLE_TILES_TARGET = "https://tile.googleapis.com";
@@ -30,6 +51,7 @@ export default defineConfig(({ command, mode }) => {
     const proxy = apiKey ? googleTilesProxy(apiKey) : {};
 
     return {
+        plugins: [noStoreDependencies()],
         resolve: {
             alias: {
                 "@spacexr/3d-tiles-babylon": fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)),
