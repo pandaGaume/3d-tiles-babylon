@@ -52,7 +52,7 @@ The camera starts above the Mont Blanc summit. URL parameters:
 | `imagery=none`             | Imagery draped on shaded grids: `debug` (default), `none`, or the name of a local module (see [Imagery](#imagery))                                    |
 | `kmax=4`                   | Deepest drape, in levels below the terrain tile                                                                                                       |
 | `subtrees=13/4252/2920/13` | Terrain subtrees with their own levels, `lod/x/y/maxLOD` separated by commas: from each root tile down, the grid stops at `maxLOD`, or refines deeper |
-| `renderer=webgpu`          | Renders with WebGPU where the browser supports it, WebGL otherwise; imagery and the `gpu` engine still need WebGL 2                                   |
+| `renderer=webgpu`          | Renders with WebGPU where the browser supports it, WebGL otherwise                                                                                    |
 | `monitor=0`                | Disables the monitoring overlay and its counters                                                                                                      |
 
 The Mapzen attribution is displayed in the bottom-right corner.

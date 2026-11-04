@@ -9,6 +9,7 @@ export * from "./gltf/gltf-tile-adapter";
 export * from "./monitor/runtime-monitor";
 export * from "./raster/raster-pages";
 export * from "./raster/raster-tile-adapter";
+export * from "./raster/texture-array-backends";
 export * from "./raster/texture-array-pool";
 export * from "./runtime/runtime-driver";
 export * from "./scene/geospatial-scene";

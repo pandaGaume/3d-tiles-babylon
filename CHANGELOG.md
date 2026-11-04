@@ -31,6 +31,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - `createGeospatialWebGPUEngine` and `createGeospatialRendererEngine` create a WebGPU engine with large world rendering and the maximum limits of the adapter, falling back to WebGL where the browser lacks WebGPU. Shaders stay in GLSL, converted to WGSL by Babylon on WebGPU. Both examples take a `renderer=webgpu` URL parameter.
 
+- Imagery draping and the GPU terrain engine render on WebGPU: `TextureArrayPool` has a WebGPU backend, which writes single layers through Babylon's texture helper and copies every layer, float layers included, when the array grows. The drape plugin declares itself GLSL only and its materials are created with `forceGLSL`, pages are sampled at an explicit level so that the converted shaders keep WGSL's uniform control flow, and the GPU terrain engine interleaves its 12 instance attributes in one vertex buffer, within the 8 vertex buffers WebGPU devices may bind.
+
 ### Changed
 
 - The Google example uses the split activation and presentation ports instead of the legacy content adapter, and detects external tilesets from the payload instead of the media type or `.json` extension.

@@ -149,7 +149,8 @@ void main(void) {
     if (vImagery.z >= 0.0) {
         // Point registration: page coordinate t lies at the centre of texel t * (size - 1).
         vec2 uv = (clamp(vImagery.xy, 0.0, 1.0) * (imagerySize - 1.0) + 0.5) / imagerySize;
-        albedo = texture(imagery, vec3(uv, floor(vImagery.z + 0.5))).rgb;
+        // No mipmaps: an explicit level is the same colour, and allowed in non-uniform control flow on WebGPU.
+        albedo = textureLod(imagery, vec3(uv, floor(vImagery.z + 0.5)), 0.0).rgb;
     }
 #endif
     vec3 normal = normalize(vNormal);

@@ -73,8 +73,9 @@ export class GridShapes {
         private readonly system: GeodeticSystem = GeodeticSystem.WGS84,
     ) {
         this.pool = new TextureArrayPool(scene, { size: cells + 1, format: "rgba32f", initialLayers: 64 });
-        // Float layers are not copied when the pool grows: write every shape again.
-        this.growObserver = this.pool.onGrowObservable.add(() => {
+        // Float layers are not copied when a WebGL 2 pool grows: write every shape again.
+        this.growObserver = this.pool.onGrowObservable.add((pool) => {
+            if (pool.layersKeptOnGrowth) return;
             for (const entry of this.entries.values()) this.write(entry);
         });
     }
