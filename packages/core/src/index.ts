@@ -19,6 +19,7 @@ export * from "./terrain/gpu/elevation-pages";
 export * from "./terrain/gpu/gpu-terrain-engine";
 export * from "./terrain/gpu/grid-shapes";
 export * from "./terrain/gpu/instanced-grid";
+export * from "./terrain/gpu/pick-surface";
 export * from "./terrain/grid-source";
 export * from "./terrain/mesh/geodesic-grid-geometry";
 export * from "./terrain/mesh/geodesic-grid-pipeline";
