@@ -1,8 +1,38 @@
 import { fileURLToPath } from "node:url";
 
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+
+/**
+ * Serves the dependencies Vite pre-bundles without browser caching. Vite marks them immutable for a year, but the dev
+ * server starts with `--force` and rebuilds them every time: a browser keeping the chunks of an earlier session mixed
+ * two builds of Babylon.js in one page, whose shader includes then went missing.
+ */
+function noStoreDependencies(): Plugin {
+    return {
+        name: "no-store-dependencies",
+        configureServer(server) {
+            server.middlewares.use((request, response, next) => {
+                if (request.url?.includes("/node_modules/.vite/")) {
+                    const setHeader = response.setHeader.bind(response);
+                    response.setHeader = ((
+                        name: string,
+                        value: number | string | readonly string[],
+                    ) =>
+                        setHeader(
+                            name,
+                            name.toLowerCase() === "cache-control"
+                                ? "no-store"
+                                : value,
+                        )) as typeof response.setHeader;
+                }
+                next();
+            });
+        },
+    };
+}
 
 export default defineConfig({
+    plugins: [noStoreDependencies()],
     resolve: {
         alias: {
             "@spacexr/3d-tiles-babylon": fileURLToPath(

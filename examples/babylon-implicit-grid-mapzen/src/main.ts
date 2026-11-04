@@ -19,7 +19,7 @@ import {
     type ITerrainEngine,
     type ITerrainEngineInputs,
     type IBabylonRasterPage,
-    createGeospatialEngine,
+    createGeospatialRendererEngine,
     createGeospatialScene,
 } from "@spacexr/3d-tiles-babylon";
 import {
@@ -69,11 +69,15 @@ async function run(): Promise<void> {
         frame: requiredElement("frame-statistics", HTMLSpanElement),
     };
     const tileLabels = requiredElement("tile-labels", HTMLDivElement);
-    const engine = createGeospatialEngine(canvas);
+    const parameters = new URLSearchParams(window.location.search);
+    // `renderer=webgpu` renders with WebGPU where the browser supports it, WebGL otherwise.
+    const { engine, renderer } = await createGeospatialRendererEngine(
+        canvas,
+        parameters.get("renderer") === "webgpu" ? "webgpu" : "webgl",
+    );
     const scene = createGeospatialScene(engine);
 
     const geodeticSystem = GeodeticSystem.WGS84;
-    const parameters = new URLSearchParams(window.location.search);
     const monitoringEnabled = parameters.get("monitor") !== "0";
     const solidRendering = parameters.get("solid") === "1";
     const elevationEnabled = parameters.get("elevation") !== "0";
@@ -407,10 +411,11 @@ async function run(): Promise<void> {
     status.textContent = "Loading the implicit quadtree...";
     await Promise.all([driver.start(), imageryDriver?.start()]);
     monitor.setStartupMilliseconds(performance.now() - startupStartedAt);
-    status.textContent = `Global WebMercator coverage, ${source.tileset.root.children?.length ?? 0} roots, LOD ${source.metrics.minLOD}..${source.metrics.maxLOD}`;
+    status.textContent = `Global WebMercator coverage, ${source.tileset.root.children?.length ?? 0} roots, LOD ${source.metrics.minLOD}..${source.metrics.maxLOD} | ${renderer === "webgpu" ? "WebGPU" : "WebGL"}`;
 
     // Objects of the example, for probes run from the browser console.
     (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = {
+        renderer,
         runtime,
         imageryRuntime,
         terrain,

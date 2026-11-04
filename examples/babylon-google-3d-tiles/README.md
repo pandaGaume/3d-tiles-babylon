@@ -69,6 +69,8 @@ The preview server reads `GOOGLE_MAP_TILES_API_KEY` from `.env` when it starts a
 
 Run these commands from the repository root, where the npm workspace `package.json` is located.
 
+Add `?renderer=webgpu` to the page URL to render with WebGPU where the browser supports it; the example falls back to WebGL otherwise and shows the renderer in its status line.
+
 ## Coordinate frames
 
 The runtime and Babylon scene both use WGS84 ECEF metres. The Babylon.js 9 `GeospatialCamera` navigates the globe directly, while `useLargeWorldRendering` keeps CPU matrix calculations precise and applies a floating origin before values reach the GPU.

@@ -21,6 +21,7 @@ import "@babylonjs/loaders/glTF/2.0/index.js";
 | Export                                                | Role                                                                                                     |
 | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `createGeospatialEngine`, `createGeospatialScene`     | WebGL engine with large world rendering; right-handed scene without pointer-move picking                 |
+| `createGeospatialWebGPUEngine`, `createGeospatialRendererEngine` | WebGPU engine with large world rendering and the adapter limits; WebGPU or WebGL by browser support |
 | `createGeospatialCamera`, `useEllipsoidUpVector`      | `GeospatialCamera` orbiting a geodetic target, navigating along the ellipsoid surface normal             |
 | `createEcefCameraFrame`, `BabylonCameraChangeTracker` | Runtime camera frames and `CameraChangeFlags` from a Babylon camera                                      |
 | `BabylonRuntimeDriver`                                | Starts the runtime and runs a frame after rendering, only when the camera moved or loads settled         |
@@ -52,6 +53,17 @@ const content = new BabylonGltfTileAdapter(scene, {
     createRequestError: (response, uri) => new Error(`HTTP ${response.status}`), // redact credentials
     attributions,
 });
+```
+
+## WebGL and WebGPU
+
+`createGeospatialRendererEngine(canvas, "webgpu")` creates a WebGPU engine where the browser supports WebGPU and a WebGL engine otherwise, and reports which one it created. Support is checked before the canvas is bound, since a canvas holding a WebGPU context can no longer hold a WebGL one. The WebGPU engine requests the maximum limits of the adapter: WebGPU only guarantees 256 texture array layers.
+
+Shaders stay in GLSL, for the browsers and Babylon.js versions without WebGPU; on WebGPU, Babylon converts them to WGSL with its glslang and twgsl compilers, downloaded from the Babylon.js CDN on first use. glTF content, the geospatial camera, large world rendering, picking and the runtime work on both. Imagery draping and the GPU terrain engine still need WebGL 2: their texture arrays are written with WebGL 2 calls.
+
+```ts
+const { engine, renderer } = await createGeospatialRendererEngine(canvas, "webgpu");
+const scene = createGeospatialScene(engine);
 ```
 
 ## Render loop

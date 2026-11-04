@@ -1,6 +1,7 @@
 import type { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine.js";
 import { Engine } from "@babylonjs/core/Engines/engine.js";
 import type { EngineOptions } from "@babylonjs/core/Engines/thinEngine.js";
+import { WebGPUEngine, type WebGPUEngineOptions } from "@babylonjs/core/Engines/webgpuEngine.js";
 import { Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Scene } from "@babylonjs/core/scene.js";
 
@@ -30,9 +31,69 @@ export function createGeospatialEngine(canvas: HTMLCanvasElement, options: IGeos
     );
 }
 
+/** Graphics API of a geospatial engine. */
+export type GeospatialRenderer = "webgl" | "webgpu";
+
+export interface IGeospatialWebGPUEngineOptions {
+    /** Defaults to true. */
+    antialias?: boolean;
+    /** Defaults to true. */
+    adaptToDeviceRatio?: boolean;
+    /** Merged over the geospatial defaults: stencil, large world rendering and the maximum limits of the adapter. */
+    engineOptions?: WebGPUEngineOptions;
+}
+
+/**
+ * Creates a WebGPU engine for planetary ECEF coordinates, with the large world rendering of
+ * {@link createGeospatialEngine}. The engine requests the maximum limits of the adapter: WebGPU only guarantees 256
+ * texture array layers, fewer than the raster pages a draped terrain keeps resident. Shaders stay in GLSL, which
+ * Babylon converts to WGSL, so that the same materials run on WebGL and WebGPU.
+ */
+export async function createGeospatialWebGPUEngine(
+    canvas: HTMLCanvasElement,
+    options: IGeospatialWebGPUEngineOptions = {},
+): Promise<WebGPUEngine> {
+    const engine = new WebGPUEngine(canvas, {
+        antialias: options.antialias ?? true,
+        adaptToDeviceRatio: options.adaptToDeviceRatio ?? true,
+        stencil: true,
+        useLargeWorldRendering: true,
+        setMaximumLimits: true,
+        ...options.engineOptions,
+    });
+    await engine.initAsync();
+    return engine;
+}
+
+export interface IGeospatialRendererOptions {
+    webgl?: IGeospatialEngineOptions;
+    webgpu?: IGeospatialWebGPUEngineOptions;
+}
+
+/** An engine and the graphics API it renders with. */
+export interface IGeospatialRendererEngine {
+    engine: AbstractEngine;
+    renderer: GeospatialRenderer;
+}
+
+/**
+ * Creates a geospatial engine for a graphics API: WebGPU when it is requested and the browser supports it, WebGL
+ * otherwise, so that browsers without WebGPU keep working. Support is checked before the canvas is bound, since a
+ * canvas holding a WebGPU context can no longer hold a WebGL one.
+ */
+export async function createGeospatialRendererEngine(
+    canvas: HTMLCanvasElement,
+    renderer: GeospatialRenderer,
+    options: IGeospatialRendererOptions = {},
+): Promise<IGeospatialRendererEngine> {
+    if (renderer === "webgpu" && (await WebGPUEngine.IsSupportedAsync))
+        return { engine: await createGeospatialWebGPUEngine(canvas, options.webgpu), renderer: "webgpu" };
+    return { engine: createGeospatialEngine(canvas, options.webgl), renderer: "webgl" };
+}
+
 /**
  * Creates a scene that uses the glTF and 3D Tiles right-handed convention. The engine may be a WebGL engine from
- * {@link createGeospatialEngine} or a WebGPU engine created with `useLargeWorldRendering`.
+ * {@link createGeospatialEngine} or a WebGPU engine from {@link createGeospatialWebGPUEngine}.
  */
 export function createGeospatialScene(engine: AbstractEngine, options: IGeospatialSceneOptions = {}): Scene {
     const scene = new Scene(engine);
