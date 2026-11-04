@@ -1,12 +1,12 @@
+<img src="https://raw.githubusercontent.com/pandaGaume/3d-tiles-core/main/assets/brand/spacexr-component.png" alt="SpaceXR Component" height="56">
+
 # Babylon implicit grid, Mapzen
 
 This example is the integration proof for the renderer-neutral runtime pipeline.
 
-The 3D Tiles runtime owns camera traversal, implicit tiling, LOD selection, readiness, metadata handles and cache policy. The Babylon bundle only implements `ITileActivationAdapter` and `ITilePresentationAdapter`. It never imports `TileRuntime` internals.
+The 3D Tiles runtime owns camera traversal, implicit tiling, LOD selection, readiness, metadata handles and cache policy. The terrain engine only implements `ITileActivationAdapter` and `ITilePresentationAdapter`. It never imports `TileRuntime` internals.
 
-The Babylon adapter shares one normalized grid topology, not a Cartesian mesh. Every ready 3D Tile receives unique ECEF vertices projected from its geographic region onto the WGS84 ellipsoid. Curvature and east-west pinching therefore follow both LOD and latitude.
-
-This CPU implementation intentionally creates one geometry per tile. The topology and runtime contracts already support a later GPU path: normalized coordinates remain shared, while the tile region and ellipsoid parameters can become per-instance shader inputs.
+The terrain engines, the grid pipeline and the geodesic grid source come from `@spacexr/3d-tiles-babylon`. The example only assembles them: it creates the terrain and imagery runtimes, the DEM pyramid and the imagery pages, and hands presented tiles to an engine behind `ITerrainEngine`, selected with `engine`. `mesh`, the default and only engine for now, shares one normalized grid topology and creates one geometry per tile on the CPU: every ready tile receives unique ECEF vertices projected from its geographic region onto the WGS84 ellipsoid, so curvature and east-west pinching follow both LOD and latitude. A GPU engine instancing one shared grid is in preparation; it plugs into the same interface, with the same runtimes, DEM and imagery.
 
 Every presented tile is colored by absolute LOD and receives a screen-space `X/Y/LOD` label. Those identifiers are also published through the example's 3D Tiles metadata, making parent-child overlap and incorrect replacement cuts directly visible while debugging traversal.
 
@@ -28,20 +28,30 @@ Grid vertices are displaced with Mapzen Terrarium heights from a `DemPyramid` of
 
 DEM tiles are stitched with the first column, row and sample of their east, south and south-east neighbours, as in SpaceXR, and sampled in point registration: neighbouring grids of the same level read identical heights on their shared edge. Where tiles of several levels meet, every edge vertex takes the height chosen by the `heights` parameter, computed identically by every tile touching it. The runtime keeps neighbouring tiles within one level of detail (2:1 quadtree balance), and shaded rendering uses normals of the stitched DEM surface, so tile edges show neither cracks nor shading seams.
 
+When many tiles arrive at once, the grids whose neighbours changed are rebuilt within `junctionBudget` milliseconds per frame, cracks first and nearest first, so that a wave of loaded tiles spreads over several frames instead of stalling one.
+
 Tiles start with a 0/0 m height range. When a DEM is loaded, the tile reports its measured range to the runtime through `tileBoundingVolume`, and the four quadrant ranges are recorded for its children. The resolver applies them when the children are created, and the runtime applies them again to children created before the parent DEM arrived.
 
 The camera starts above the Mont Blanc summit. URL parameters:
 
-| Parameter          | Effect                                                                                                         |
-| ------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `elevation=0`      | Flat grids, no DEM requests                                                                                    |
-| `scale=2`          | Initial altitude scale; the panel slider changes it live                                                       |
-| `solid=1`          | Shaded rendering with a sun light instead of the wireframe                                                     |
-| `radius=250`       | Initial camera distance to the summit in metres                                                                |
-| `pitch=50`         | Initial camera pitch in degrees                                                                                |
-| `junctions=coarse` | Junction policy between levels of detail: `fine` (default), `coarse` or `none`                                 |
-| `heights=finest`   | Height of edge vertices shared by several levels: DEM of the `coarsest` (default), `finest` or `average` level |
-| `balance=0`        | Disables the 2:1 quadtree balance, which keeps neighbouring tiles within one level of detail                   |
+| Parameter                | Effect                                                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `elevation=0`            | Flat grids, no DEM requests                                                                                        |
+| `scale=2`                | Initial altitude scale; the panel slider changes it live                                                           |
+| `solid=1`                | Shaded rendering with a sun light instead of the wireframe                                                         |
+| `radius=250`             | Initial camera distance to the summit in metres                                                                    |
+| `pitch=50`               | Initial camera pitch in degrees                                                                                    |
+| `junctions=coarse`       | Junction policy between levels of detail: `fine` (default), `coarse` or `none`                                     |
+| `heights=finest`         | Height of edge vertices shared by several levels: DEM of the `coarsest` (default), `finest` or `average` level     |
+| `balance=0`              | Disables the 2:1 quadtree balance, which keeps neighbouring tiles within one level of detail                       |
+| `interpolation=bilinear` | DEM levels generated below level 15: `cubic` (default), `bilinear`, `linear` or `nearest`                          |
+| `engine=mesh`            | Terrain engine: `mesh` (default), one CPU mesh per tile                                                            |
+| `junctionBudget=4`       | Main-thread milliseconds per frame for rebuilding the grids whose neighbours changed, 4 by default                 |
+| `hysteresis=0.2`         | Refined tiles coarsen only once their error drops below `1 - hysteresis` times the threshold                       |
+| `coarsenDelay=20`        | Frames a refined tile waits before coarsening                                                                      |
+| `imagery=none`           | Imagery draped on shaded grids: `debug` (default), `none`, or the name of a local module (see [Imagery](#imagery)) |
+| `kmax=4`                 | Deepest drape, in levels below the terrain tile                                                                    |
+| `monitor=0`              | Disables the monitoring overlay and its counters                                                                   |
 
 The Mapzen attribution is displayed in the bottom-right corner.
 
@@ -55,6 +65,8 @@ Monitoring is throttled to four publications per second. Open the example with `
 
 ## Imagery
 
-Shaded grids (`solid=1`) are draped with imagery from a second implicit quadtree, levels 3 to 20, traversed by its own runtime on texel size rather than geometric error. Each terrain tile is divided into as many cells as the imagery cut needs above it, one page per cell, up to 4 levels below the terrain: distant tiles show one page, near tiles up to 256, and a cell falls back to a coarser page while its own loads; pages are stitched with their neighbours, so the imagery shows no seam between pages. The imagery is drawn locally for now: a checkerboard tinted by level and labelled with the page address, which makes the binding visible. `hysteresis` (0.2) and `coarsenDelay` (20 frames) tune how readily refined tiles coarsen while the camera moves. `junctionBudget` (4 ms) caps the main-thread time spent per frame rebuilding the grids whose neighbours changed, cracks first and nearest first, so that a wave of loaded tiles spreads over several frames. `engine` selects the terrain engine of `@spacexr/3d-tiles-babylon`: `mesh`, the default and only engine for now, builds one mesh per tile on the CPU; the runtimes, the DEM pyramid and the imagery pages are shared by every engine. `imagery=none` keeps the level colours, and `kmax` sets the deepest drape, 4 levels below the terrain by default.
+Shaded grids (`solid=1`) are draped with imagery from a second implicit quadtree, levels 3 to 20, traversed by its own runtime on texel size rather than geometric error. Each terrain tile is divided into as many cells as the imagery cut needs above it, one page per cell, up to 4 levels below the terrain: distant tiles show one page, near tiles up to 256, and a cell falls back to a coarser page while its own loads; pages are stitched with their neighbours, so the imagery shows no seam between pages. `kmax` sets the deepest drape, 4 levels below the terrain by default.
+
+`imagery=debug`, the default, draws the pages locally: a checkerboard tinted by level and labelled with the page address, which makes the binding visible. `imagery=none` keeps the level colours.
 
 `imagery=<name>` drapes the imagery of `src/local/<name>.imagery.ts`, a module exporting `createImagery()` with a tile loader, a maximum level and an attribution (see `src/local-imagery.ts`). The `src/local/` folder is ignored by git, for sources that must stay on the developer machine.

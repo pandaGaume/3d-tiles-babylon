@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/pandaGaume/3d-tiles-core/main/assets/brand/spacexr-component.png" alt="SpaceXR Component" height="56">
+
 # Babylon.js and Google Photorealistic 3D Tiles
 
 This example connects Babylon.js to Google Photorealistic 3D Tiles through `@spacexr/3d-tiles-runtime` and `@spacexr/3d-tiles-babylon`. Only the Google-specific parts live here: the session-preserving URI resolver, the API key proxy and the redacted request errors.

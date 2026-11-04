@@ -1,6 +1,8 @@
+<img src="https://raw.githubusercontent.com/pandaGaume/3d-tiles-core/main/assets/brand/spacexr-component.png" alt="SpaceXR Component" height="56">
+
 # @spacexr/3d-tiles-babylon
 
-Babylon.js 9 adaptation of [`@spacexr/3d-tiles-runtime`](https://github.com/pandaGaume/3d-tiles-core). The scene works in WGS84 ECEF metres with large world rendering, so tiles keep their exact 3D Tiles transforms.
+Babylon.js 9 adaptation of [`@spacexr/3d-tiles-runtime`](https://github.com/pandaGaume/3d-tiles-core). The scene works in WGS84 ECEF metres with large world rendering, so tiles keep their exact 3D Tiles transforms. The package also drapes raster imagery on terrain and renders terrain through interchangeable engines.
 
 ## Install
 
@@ -27,6 +29,9 @@ import "@babylonjs/loaders/glTF/2.0/index.js";
 | `createBabylonTileMatrix`                             | glTF Y-up to 3D Tiles Z-up, then the tile local-to-ECEF transform                                        |
 | `CopyrightAttributions`, `extractGltfCopyrights`      | Ordered `asset.copyright` sources of presented content, as data providers require                        |
 | `BabylonRuntimeMonitor`, `formatBytes`                | Throttled snapshots joining runtime statistics with Babylon frame, draw call, GPU time and heap counters |
+| `TextureArrayPool`                                    | RGBA8 pages or RGBA32F tables in one WebGL 2 texture array, written layer by layer and grown on the GPU |
+| `BabylonRasterPages`, `BabylonRasterTileAdapter`      | Stitched imagery pages loaded into a pool, and the ports of an imagery runtime that publishes its cut    |
+| `MeshRasterDrape`, `RasterDrapeMaterialPlugin`        | `4^k` imagery pages per terrain mesh, `k` following the imagery cut, read through a per-mesh cell table  |
 | `ITerrainEngine`, `MeshTerrainEngine`                 | Interchangeable terrain engines; the mesh engine builds one CPU mesh per tile, draped with imagery pages |
 | `createGeodesicGridSource`, `TILE_METRICS`            | Implicit Web Mercator quadtree of terrain tiles, with height ranges prepared by a DEM pyramid            |
 | `DisplayedTiles`                                      | Last known cut of a quadtree: levels across each tile edge, kept through tiles leaving the view          |

@@ -1,11 +1,13 @@
 [![CI](https://github.com/pandaGaume/3d-tiles-babylon/actions/workflows/ci.yml/badge.svg)](https://github.com/pandaGaume/3d-tiles-babylon/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
+<img src="https://raw.githubusercontent.com/pandaGaume/3d-tiles-core/main/assets/brand/spacexr-component.png" alt="SpaceXR Component" height="56">
+
 # 3D Tiles for Babylon.js
 
 `3d-tiles-babylon` is the Babylon.js adaptation of [3d-tiles-core](https://github.com/pandaGaume/3d-tiles-core), the renderer-neutral OGC 3D Tiles runtime of SpaceXR.
 
-The runtime owns traversal, level of detail, loading and caching. This repository binds it to Babylon.js 9: camera frames, render loop, glTF content, attributions and monitoring.
+The runtime owns traversal, level of detail, loading and caching. This repository binds it to Babylon.js 9: camera frames, render loop, glTF content, attributions, monitoring, imagery draping on terrain and terrain engines interchangeable behind `ITerrainEngine`.
 
 ## Repository layout
 
@@ -51,11 +53,11 @@ await new BabylonRuntimeDriver(runtime, scene, { camera }).start();
 engine.runRenderLoop(() => scene.render());
 ```
 
-See the [package README](packages/core/README.md) for the complete API.
+See the [package README](packages/core/README.md) for the complete API, including imagery draping and the terrain engines.
 
 ## Development
 
-`@spacexr/3d-tiles-core`, `@spacexr/3d-tiles-runtime`, `@spacexr/tiles` and `@spacexr/grid` are not published yet. Until they are, this workspace links them from a `3d-tiles-core` checkout next to this repository, which must be built first:
+`@spacexr/3d-tiles-core`, `@spacexr/3d-tiles-runtime`, `@spacexr/tiles`, `@spacexr/raster`, `@spacexr/dem` and `@spacexr/grid` are not published yet. Until they are, this workspace links them from a `3d-tiles-core` checkout next to this repository, which must be built first:
 
 ```text
 Gaume/
