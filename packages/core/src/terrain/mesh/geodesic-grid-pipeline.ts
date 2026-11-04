@@ -21,8 +21,9 @@ import {
 } from "@spacexr/3d-tiles-runtime";
 import { GeodeticSystem } from "@spacexr/geodesy";
 import { JunctionGridTopologyCache, type IGridTopology, SAME_EDGE_LODS, edgeLodsKey, type GridEdgeLods } from "@spacexr/grid";
-import { selectSurfaceLevels, webMercatorSurfaceNormal, type DemPyramid, type IHeightRange, type SurfaceLevelPolicy } from "@spacexr/dem";
+import { selectSurfaceLevels, webMercatorSurfaceNormal, type DemPyramid, type SurfaceLevelPolicy } from "@spacexr/dem";
 import { DisplayedTiles, type JunctionPolicy } from "../displayed-tiles";
+import { regionCenter, regionWithHeights, tileIdentity, tileRegion } from "../terrain-tile";
 import {
     composeElevatedPositions,
     type IElevatedGridGeometry,
@@ -97,52 +98,6 @@ interface IJunctionRebuild {
 
 /** Height in metres at normalized tile coordinates, `u` west to east and `v` north to south. */
 type HeightSampler = (u: number, v: number) => number;
-
-/** Region whose height interval is a measured range multiplied by a vertical scale. */
-function regionWithHeights(
-    region: readonly number[],
-    range: IHeightRange,
-    scale: number,
-): [number, number, number, number, number, number] {
-    return [region[0]!, region[1]!, region[2]!, region[3]!, range.minimum * scale, range.maximum * scale];
-}
-
-function tileRegion(context: ITileActivationContext<IEcefSpatialState, IBabylonGeodesicGridHandle, never>): readonly number[] {
-    const region = context.tile.source.boundingVolume.region;
-    if (!region) throw new Error(`Tile ${context.tile.id} does not expose a geodetic region.`);
-    return region;
-}
-
-function tileIdentity(context: ITileActivationContext<IEcefSpatialState, IBabylonGeodesicGridHandle, never>): ITileAddress {
-    const properties = context.tile.source.metadata?.properties;
-    const readCoordinate = (name: "lod" | "x" | "y"): number => {
-        const value = properties?.[name];
-        if (typeof value !== "number" || !Number.isSafeInteger(value))
-            throw new Error(`Tile ${context.tile.id} has no valid ${name} metadata.`);
-        return value;
-    };
-    return {
-        lod: readCoordinate("lod"),
-        x: readCoordinate("x"),
-        y: readCoordinate("y"),
-    };
-}
-
-function regionCenter(region: readonly number[]): Vector3 {
-    const [west, south, east, north, minimumHeight, maximumHeight] = region;
-    if (
-        west === undefined ||
-        south === undefined ||
-        east === undefined ||
-        north === undefined ||
-        minimumHeight === undefined ||
-        maximumHeight === undefined
-    )
-        throw new RangeError("The 3D Tiles region is incomplete.");
-
-    const center = GeodeticSystem.WGS84.geodeticRadiansToEcef((south + north) / 2, (west + east) / 2, (minimumHeight + maximumHeight) / 2);
-    return new Vector3(center.x, center.y, center.z);
-}
 
 function lodColor(lod: number): string {
     return LOD_COLORS[lod % LOD_COLORS.length]!;

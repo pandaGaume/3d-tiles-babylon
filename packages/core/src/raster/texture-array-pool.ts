@@ -11,6 +11,12 @@ interface IWebGL2TextureEngine extends AbstractEngine {
     _bindTextureDirectly(target: number, texture: InternalTexture | null, forTextureDataUpdate?: boolean, force?: boolean): boolean;
 }
 
+/** Texel format of a {@link TextureArrayPool}. */
+export type TextureArrayFormat = "rgba8" | "rgba32f" | "r32f";
+
+/** Bytes per texel of each format. */
+const TEXEL_BYTES: Record<TextureArrayFormat, number> = { rgba8: 4, rgba32f: 16, r32f: 4 };
+
 export interface ITextureArrayPoolOptions {
     /** Width and height of every layer, in texels. */
     size: number;
@@ -20,11 +26,11 @@ export interface ITextureArrayPoolOptions {
     growth?: number;
     /**
      * Texel format. `rgba8` (default) holds colours, filtered bilinearly and copied on the GPU when the pool grows.
-     * `rgba32f` holds data read with `texelFetch`, such as indirection tables; it is not filtered and not copied when
-     * the pool grows, since copying float layers needs `EXT_color_buffer_float`: owners write their layers again on
-     * `onGrowObservable`.
+     * `rgba32f` holds data read with `texelFetch`, such as indirection tables, and `r32f` one value per texel, such
+     * as heights. Float layers are not filtered and not copied when the pool grows, since copying them needs
+     * `EXT_color_buffer_float`: owners write their layers again on `onGrowObservable`.
      */
-    format?: "rgba8" | "rgba32f";
+    format?: TextureArrayFormat;
 }
 
 /**
@@ -37,8 +43,8 @@ export interface ITextureArrayPoolOptions {
  */
 export class TextureArrayPool extends BaseTexture {
     public readonly size: number;
-    public readonly format: "rgba8" | "rgba32f";
-    /** Notified after the pool grew. Layers of an `rgba32f` pool must then be written again. */
+    public readonly format: TextureArrayFormat;
+    /** Notified after the pool grew. Layers of a float pool must then be written again. */
     public readonly onGrowObservable = new Observable<TextureArrayPool>();
     private readonly growth: number;
     private readonly free: number[] = [];
@@ -73,7 +79,7 @@ export class TextureArrayPool extends BaseTexture {
 
     /** Bytes allocated on the GPU. */
     public get gpuBytes(): number {
-        return this.layers * this.size * this.size * (this.format === "rgba32f" ? 16 : 4);
+        return this.layers * this.size * this.size * TEXEL_BYTES[this.format];
     }
 
     public override getClassName(): string {
@@ -101,8 +107,8 @@ export class TextureArrayPool extends BaseTexture {
     /**
      * Writes texels into a layer, by default the whole page.
      *
-     * @param data - `width * height * 4` values, rows from the top of the page: bytes for `rgba8`, floats for
-     *     `rgba32f`.
+     * @param data - Values for `width * height` texels, rows from the top of the page: four bytes per texel for
+     *     `rgba8`, four floats for `rgba32f`, one float for `r32f`.
      */
     public write(layer: number, data: ArrayBufferView, x = 0, y = 0, width = this.size, height = this.size): void {
         const texture = this._texture;
@@ -120,8 +126,8 @@ export class TextureArrayPool extends BaseTexture {
                 width,
                 height,
                 1,
-                gl.RGBA,
-                this.format === "rgba32f" ? gl.FLOAT : gl.UNSIGNED_BYTE,
+                this.format === "r32f" ? gl.RED : gl.RGBA,
+                this.format === "rgba8" ? gl.UNSIGNED_BYTE : gl.FLOAT,
                 data,
             ),
         );
@@ -140,13 +146,20 @@ export class TextureArrayPool extends BaseTexture {
         texture.baseHeight = texture.height = this.size;
         texture.baseDepth = texture.depth = layers;
         texture.is2DArray = true;
-        texture.format = Constants.TEXTUREFORMAT_RGBA;
-        const float = this.format === "rgba32f";
+        const float = this.format !== "rgba8";
+        texture.format = this.format === "r32f" ? Constants.TEXTUREFORMAT_R : Constants.TEXTUREFORMAT_RGBA;
         texture.type = float ? Constants.TEXTURETYPE_FLOAT : Constants.TEXTURETYPE_UNSIGNED_BYTE;
         texture.samplingMode = float ? Constants.TEXTURE_NEAREST_SAMPLINGMODE : Constants.TEXTURE_BILINEAR_SAMPLINGMODE;
         texture.generateMipMaps = false;
         engine._bindTextureDirectly(gl.TEXTURE_2D_ARRAY, texture, true);
-        gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, float ? gl.RGBA32F : gl.RGBA8, this.size, this.size, layers);
+        gl.texStorage3D(
+            gl.TEXTURE_2D_ARRAY,
+            1,
+            { rgba8: gl.RGBA8, rgba32f: gl.RGBA32F, r32f: gl.R32F }[this.format],
+            this.size,
+            this.size,
+            layers,
+        );
         const filter = float ? gl.NEAREST : gl.LINEAR;
         gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, filter);
         gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, filter);
@@ -167,7 +180,7 @@ export class TextureArrayPool extends BaseTexture {
         if (layers <= this.layers) return false;
 
         const texture = this.createArray(layers);
-        if (this.format === "rgba32f") {
+        if (this.format !== "rgba8") {
             old.dispose();
             this._texture = texture;
             for (let layer = layers - 1; layer >= this.layers; layer--) this.free.push(layer);
