@@ -59,6 +59,8 @@ export async function createGeospatialWebGPUEngine(
         stencil: true,
         useLargeWorldRendering: true,
         setMaximumLimits: true,
+        // Every feature of the adapter, timestamp queries included, which the monitor needs to measure GPU frame time.
+        enableAllFeatures: true,
         ...options.engineOptions,
     });
     await engine.initAsync();

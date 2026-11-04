@@ -107,7 +107,7 @@ engine.runRenderLoop(() => {
 });
 ```
 
-GPU frame time requires GPU timer queries. The monitor registers the WebGL time query extension; a WebGPU application imports `@babylonjs/core/Engines/WebGPU/Extensions/engine.query.js`.
+GPU frame time requires GPU timer queries. The monitor registers the time query extensions of WebGL and WebGPU. On WebGPU, timestamp queries are a device feature: `createGeospatialWebGPUEngine` enables every feature of the adapter, timestamp queries included; an engine created otherwise needs `enableAllFeatures` or the `timestamp-query` feature in its device descriptor.
 
 ## License
 
