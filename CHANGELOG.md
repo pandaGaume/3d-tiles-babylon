@@ -48,6 +48,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- The monitor reports GPU frame time on WebGPU: `createGeospatialWebGPUEngine` enables the features of the adapter, timestamp queries included, and the monitor registers the WebGPU time query extension.
 - The example dev servers serve the dependencies Vite pre-bundles with `Cache-Control: no-store`. Vite marks them immutable for a year, but `vite --force` rebuilds them at every start: a browser keeping the chunks of an earlier session mixed two builds of Babylon.js in one page, whose shader includes went missing, and Babylon compiled the HTML page it fetched in their place.
 - Turning the camera in the Google example no longer reloads the tiles it just saw. The cause was in the runtime defaults, fixed in 3d-tiles-core: a cache retention of 120 runtime frames, about 6 seconds while the camera turns, and 256 cached contents. The examples now only set their memory budgets and the parameters of their tilesets.
 

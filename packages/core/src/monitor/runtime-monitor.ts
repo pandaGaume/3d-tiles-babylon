@@ -1,5 +1,7 @@
 // GPU frame time queries are engine extensions that Babylon 9 registers only when imported.
 import "@babylonjs/core/Engines/AbstractEngine/abstractEngine.timeQuery.js";
+// GPU frame time on WebGPU, with timestamp queries.
+import "@babylonjs/core/Engines/WebGPU/Extensions/engine.query.js";
 import "@babylonjs/core/Engines/Extensions/engine.query.js";
 
 import type { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine.js";
