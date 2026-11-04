@@ -6,7 +6,7 @@ This example is the integration proof for the renderer-neutral runtime pipeline.
 
 The 3D Tiles runtime owns camera traversal, implicit tiling, LOD selection, readiness, metadata handles and cache policy. The terrain engine only implements `ITileActivationAdapter` and `ITilePresentationAdapter`. It never imports `TileRuntime` internals.
 
-The terrain engines, the grid pipeline and the geodesic grid source come from `@spacexr/3d-tiles-babylon`. The example only assembles them: it creates the terrain and imagery runtimes, the DEM pyramid and the imagery pages, and hands presented tiles to an engine behind `ITerrainEngine`, selected with `engine`. `mesh`, the default and only engine for now, shares one normalized grid topology and creates one geometry per tile on the CPU: every ready tile receives unique ECEF vertices projected from its geographic region onto the WGS84 ellipsoid, so curvature and east-west pinching follow both LOD and latitude. A GPU engine instancing one shared grid is in preparation; it plugs into the same interface, with the same runtimes, DEM and imagery.
+The terrain engines, the grid pipeline and the geodesic grid source come from `@spacexr/3d-tiles-babylon`. The example only assembles them: it creates the terrain and imagery runtimes, the DEM pyramid and the imagery pages, and hands presented tiles to an engine behind `ITerrainEngine`, selected with `engine`. `mesh`, the default, shares one normalized grid topology and creates one geometry per tile on the CPU: every ready tile receives unique ECEF vertices projected from its geographic region onto the WGS84 ellipsoid, so curvature and east-west pinching follow both LOD and latitude. `gpu` instances predefined grids instead, one per tile of the finer of the terrain and imagery cuts, displaced in the vertex shader from elevation pages; it renders the terrain in one draw call per grid variant. Debug labels are shown by the mesh engine only.
 
 Every presented tile is colored by absolute LOD and receives a screen-space `X/Y/LOD` label. Those identifiers are also published through the example's 3D Tiles metadata, making parent-child overlap and incorrect replacement cuts directly visible while debugging traversal.
 
@@ -45,7 +45,7 @@ The camera starts above the Mont Blanc summit. URL parameters:
 | `heights=finest`         | Height of edge vertices shared by several levels: DEM of the `coarsest` (default), `finest` or `average` level     |
 | `balance=0`              | Disables the 2:1 quadtree balance, which keeps neighbouring tiles within one level of detail                       |
 | `interpolation=bilinear` | DEM levels generated below level 15: `cubic` (default), `bilinear`, `linear` or `nearest`                          |
-| `engine=mesh`            | Terrain engine: `mesh` (default), one CPU mesh per tile                                                            |
+| `engine=gpu`             | Terrain engine: `mesh` (default), one CPU mesh per tile, or `gpu`, predefined grids instanced on the GPU           |
 | `junctionBudget=4`       | Main-thread milliseconds per frame for rebuilding the grids whose neighbours changed, 4 by default                 |
 | `hysteresis=0.2`         | Refined tiles coarsen only once their error drops below `1 - hysteresis` times the threshold                       |
 | `coarsenDelay=20`        | Frames a refined tile waits before coarsening                                                                      |

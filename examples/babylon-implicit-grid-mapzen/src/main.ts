@@ -9,6 +9,7 @@ import {
     BabylonRasterTileAdapter,
     BabylonRuntimeDriver,
     BabylonRuntimeMonitor,
+    GpuTerrainEngine,
     MeshTerrainEngine,
     TILE_METRICS,
     createGeodesicGridSource,
@@ -16,6 +17,7 @@ import {
     metadataTileAddress,
     type IGridElevationOptions,
     type ITerrainEngine,
+    type ITerrainEngineInputs,
     type IBabylonRasterPage,
     createGeospatialEngine,
     createGeospatialScene,
@@ -305,23 +307,24 @@ async function run(): Promise<void> {
         : undefined;
     // The engine turning terrain tiles into pixels; the runtimes, the DEM and the imagery pages stay shared.
     const engineName = parameters.get("engine") ?? "mesh";
-    if (engineName !== "mesh")
-        throw new RangeError("The engine parameter must be mesh.");
-    const terrain: ITerrainEngine = new MeshTerrainEngine(
-        {
-            scene,
-            labelLayer: tileLabels,
-            wireframe: !solidRendering,
-            junctions,
-            edgeHeights,
-            ...(elevation ? { elevation } : {}),
-            ...(imageryPages ? { imageryPages } : {}),
-        },
-        {
-            maxDrapeDepth,
-            junctionBudgetMilliseconds: junctionBudget,
-        },
-    );
+    if (engineName !== "mesh" && engineName !== "gpu")
+        throw new RangeError("The engine parameter must be mesh or gpu.");
+    const terrainInputs: ITerrainEngineInputs = {
+        scene,
+        labelLayer: tileLabels,
+        wireframe: !solidRendering,
+        junctions,
+        edgeHeights,
+        ...(elevation ? { elevation } : {}),
+        ...(imageryPages ? { imageryPages } : {}),
+    };
+    const terrain: ITerrainEngine =
+        engineName === "gpu"
+            ? new GpuTerrainEngine(terrainInputs)
+            : new MeshTerrainEngine(terrainInputs, {
+                  maxDrapeDepth,
+                  junctionBudgetMilliseconds: junctionBudget,
+              });
     verticalScaleInput.value = String(verticalScale);
     verticalScaleValue.value = `x${verticalScale}`;
     verticalScaleInput.disabled = !dem;

@@ -26,6 +26,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - The implicit grid example generates DEM levels 16 to 18 from Terrarium level 15 instead of overzooming it, with the interpolation chosen by the `interpolation` URL parameter: `cubic` (default), `bilinear`, `linear` or `nearest`.
 - `ITerrainEngine` makes terrain engines interchangeable behind the runtime ports and two render loop hooks. `MeshTerrainEngine`, the CPU engine, moves from the implicit grid example to `@spacexr/3d-tiles-babylon` with the grid pipeline, its geometry, `DisplayedTiles` and the geodesic grid source; the example selects it with `engine=mesh`.
 
+- `GpuTerrainEngine` renders terrain on the GPU, selected in the implicit grid example with `engine=gpu`: predefined `@spacexr/grid` variants with skirts, instanced once per tile of the `DrapeInstanceCut`, sized and placed by four instance attributes, with positions from double-precision shapes per tile row (`GridShapes`) and heights from 32-bit float elevation pages (`ElevationPages`). `TextureArrayPool` accepts the `r32f` format. The render loop drops from 7.3 to 1.8 ms at the 90th percentile on the same navigation.
+
 ### Changed
 
 - The Google example uses the split activation and presentation ports instead of the legacy content adapter, and detects external tilesets from the payload instead of the media type or `.json` extension.
