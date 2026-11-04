@@ -127,11 +127,24 @@ async function run(): Promise<void> {
     let verticalScale = initialScale;
     const dem = elevationEnabled ? createMapzenTerrariumSource() : undefined;
     const childHeightRanges = new ChildHeightRanges();
+    // Terrain subtrees with their own levels, "lod/x/y/maxLOD" separated by commas, for example "13/4252/2920/13".
+    const subtrees = (parameters.get("subtrees") ?? "")
+        .split(",")
+        .filter(Boolean)
+        .map((entry) => {
+            const [lod, x, y, maxLOD] = entry.split("/").map(Number);
+            if (![lod, x, y, maxLOD].every(Number.isInteger))
+                throw new RangeError(
+                    "Each subtree must be written lod/x/y/maxLOD.",
+                );
+            return { root: { lod: lod!, x: x!, y: y! }, maxLOD: maxLOD! };
+        });
     // Tiles start at 0/0. Each DEM reports the tile range and prepares the ranges of its four children.
     const source = createGeodesicGridSource(
         dem
             ? { ranges: childHeightRanges, verticalScale: () => verticalScale }
             : undefined,
+        { subtrees },
     );
     if (dem)
         requiredElement("attribution", HTMLElement).textContent =
@@ -255,15 +268,10 @@ async function run(): Promise<void> {
             // The geometric error of an imagery tile is one texel: at most two texels per screen pixel.
             maxScreenSpaceError: 2,
             refinementHysteresisRatio: hysteresis,
-            // Children outside the view load in the background, so that turning the camera never falls back to their parent.
-            preloadSiblings: true,
             coarseningDelayFrames: coarsenDelay,
             maxConcurrentLoads: 12,
-            cache: {
-                maxContentEntries: 512,
-                maxMaterializedTiles: 4096,
-                unusedFrameRetention: 180,
-            },
+            // Each imagery page holds a texture array layer of 257 x 257 texels: 512 pages bound the GPU memory.
+            cache: { maxContentEntries: 512 },
         });
     }
 
@@ -353,19 +361,14 @@ async function run(): Promise<void> {
         adapter,
         maxScreenSpaceError: 10,
         refinementHysteresisRatio: hysteresis,
-        // Children outside the view load in the background, so that turning the camera never falls back to their parent.
-        preloadSiblings: true,
         coarseningDelayFrames: coarsenDelay,
         maxConcurrentLoads: 12,
         instrumentation: { enabled: monitoringEnabled },
         // Neighbouring tiles stay within one level, so that every edge junction connects.
         quadtreeBalance:
             parameters.get("balance") === "0" ? false : { wrapX: true },
-        cache: {
-            maxContentEntries: 1024,
-            maxMaterializedTiles: 4096,
-            unusedFrameRetention: 180,
-        },
+        // Terrain tiles of the view and around it; their DEM tiles are cached by the DEM pyramid.
+        cache: { maxContentEntries: 1024 },
     });
 
     const imageryRuntime = imageryPages
@@ -404,7 +407,7 @@ async function run(): Promise<void> {
     status.textContent = "Loading the implicit quadtree...";
     await Promise.all([driver.start(), imageryDriver?.start()]);
     monitor.setStartupMilliseconds(performance.now() - startupStartedAt);
-    status.textContent = `Global WebMercator coverage, ${source.dataSources.length} roots, LOD ${source.metrics.minLOD}..${source.metrics.maxLOD}`;
+    status.textContent = `Global WebMercator coverage, ${source.tileset.root.children?.length ?? 0} roots, LOD ${source.metrics.minLOD}..${source.metrics.maxLOD}`;
 
     // Objects of the example, for probes run from the browser console.
     (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = {

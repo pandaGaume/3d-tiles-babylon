@@ -85,11 +85,10 @@ async function run(): Promise<void> {
         maxScreenSpaceError: 16,
         refinementHysteresisRatio: 0.2,
         maxConcurrentLoads: 8,
+        // Memory budgets of the example; the runtime defaults keep the tiles around the view while the camera moves.
         cache: {
-            maxContentEntries: 256,
             maxContentCpuBytes: 384 * 1024 * 1024,
             maxContentGpuBytes: 768 * 1024 * 1024,
-            unusedFrameRetention: 120,
         },
         instrumentation: true,
     });
@@ -114,6 +113,9 @@ async function run(): Promise<void> {
     await driver.start();
     status.textContent = `${config.latitudeDegrees.toFixed(4)}, ${config.longitudeDegrees.toFixed(4)}`;
     engine.runRenderLoop(() => scene.render());
+
+    // Objects of the example, for probes run from the browser console.
+    (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = { runtime, scene, camera };
 
     const resize = (): void => engine.resize();
     window.addEventListener("resize", resize);
