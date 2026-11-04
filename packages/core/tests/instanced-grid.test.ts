@@ -1,33 +1,41 @@
-import { createGridTopology, createJunctionGridTopology, NeighborLod, SAME_EDGE_LODS } from "@spacexr/grid";
-import { TileNeighbor } from "@spacexr/tiles";
+import { createGridTopology } from "@spacexr/grid";
 import { describe, expect, it } from "vitest";
 
-import { skirtedGridGeometry } from "../src/terrain/gpu/instanced-grid";
+import { refinedGridTopology } from "../src/terrain/gpu/instanced-grid";
 
-describe("skirtedGridGeometry", () => {
-    it("repeats every boundary vertex once as a skirt vertex and extrudes every boundary edge", () => {
-        const topology = createGridTopology(4);
-        const { positions, indices } = skirtedGridGeometry(topology);
-        const surface = topology.coordinates.length / 2;
+describe("refinedGridTopology", () => {
+    it("adds a vertex in the middle of every cell side of the four edges, and nowhere else", () => {
+        const cells = 4;
+        const refined = refinedGridTopology(cells);
+        const plain = createGridTopology(cells);
 
-        // 25 surface vertices, of which 16 lie on the boundary; 16 boundary edges, two triangles each.
-        expect(positions.length / 3).toBe(surface + 16);
-        expect(indices.length).toBe(topology.indices.length + 16 * 6);
-        for (let vertex = surface; vertex < positions.length / 3; vertex++) {
-            const [u, v, skirt] = [positions[vertex * 3]!, positions[vertex * 3 + 1]!, positions[vertex * 3 + 2]!];
-            expect(skirt).toBe(1);
-            expect(u === 0 || u === 1 || v === 0 || v === 1).toBe(true);
+        // 25 lattice vertices and 4 midpoints per edge.
+        expect(refined.coordinates.length / 2).toBe(plain.coordinates.length / 2 + 4 * cells);
+        const midpoints: [number, number][] = [];
+        for (let vertex = 0; vertex < refined.coordinates.length / 2; vertex++) {
+            const u = refined.coordinates[vertex * 2]! * cells;
+            const v = refined.coordinates[vertex * 2 + 1]! * cells;
+            if (Number.isInteger(u) && Number.isInteger(v)) continue;
+            midpoints.push([u, v]);
+        }
+        expect(midpoints).toHaveLength(4 * cells);
+        // Every midpoint lies on an edge, half a cell from the lattice.
+        for (const [u, v] of midpoints) {
+            expect(u === 0 || u === cells || v === 0 || v === cells).toBe(true);
+            expect((u * 2) % 2 === 1 || (v * 2) % 2 === 1).toBe(true);
         }
     });
 
-    it("does not extrude inner edges, and follows the coarser edges of a junction variant", () => {
-        const coarserNorth = createJunctionGridTopology(4, 4, { ...SAME_EDGE_LODS, [TileNeighbor.N]: NeighborLod.Coarser });
-        const { positions } = skirtedGridGeometry(coarserNorth);
-        const skirtVertices = [];
-        for (let vertex = 0; vertex < positions.length / 3; vertex++) if (positions[vertex * 3 + 2] === 1) skirtVertices.push(vertex);
-
-        // The north edge keeps 3 of its 5 vertices: 14 boundary vertices instead of 16.
-        expect(skirtVertices).toHaveLength(14);
-        expect(skirtVertices.every((vertex) => positions[vertex * 3 + 1] !== 0 || [0, 0.5, 1].includes(positions[vertex * 3]!))).toBe(true);
+    it("covers the tile with triangles of the same total area as the plain grid", () => {
+        const area = (topology: ReturnType<typeof createGridTopology>): number => {
+            let total = 0;
+            const { coordinates: c, indices: i } = topology;
+            for (let t = 0; t < i.length; t += 3) {
+                const [a, b, d] = [i[t]! * 2, i[t + 1]! * 2, i[t + 2]! * 2];
+                total += Math.abs((c[b]! - c[a]!) * (c[d + 1]! - c[a + 1]!) - (c[d]! - c[a]!) * (c[b + 1]! - c[a + 1]!)) / 2;
+            }
+            return total;
+        };
+        expect(area(refinedGridTopology(8))).toBeCloseTo(1, 6);
     });
 });

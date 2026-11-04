@@ -3,60 +3,47 @@ import type { Material } from "@babylonjs/core/Materials/material.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData.js";
 import type { Scene } from "@babylonjs/core/scene.js";
-import type { IGridTopology } from "@spacexr/grid";
-
-/** Instance attributes of the GPU terrain engine, four floats each; see the vertex shader. */
-export const INSTANCE_ATTRIBUTES = ["instPlace", "instRotation", "instElevation", "instImagery"] as const;
-export type InstanceAttribute = (typeof INSTANCE_ATTRIBUTES)[number];
-
-/** Vertices of a predefined grid with its skirt: `u, v` and `1` for skirt vertices, and triangle indices. */
-export interface ISkirtedGridGeometry {
-    positions: Float32Array;
-    indices: Uint32Array;
-}
+import { createJunctionGridTopology, NeighborLod, type IGridTopology } from "@spacexr/grid";
+import { TileNeighbor } from "@spacexr/tiles";
 
 /**
- * Adds a skirt to a normalized grid topology: every boundary edge, an edge of a single triangle, is extruded below
- * the surface by a vertex copy marked `1`, which the shader moves down along the ellipsoid normal.
+ * Instance attributes of the GPU terrain engine, four floats each; see the vertex shader. The elevation references
+ * are the area of the instance in a DEM tile, `west, north, size`, and the layer of its page: its own, then those of
+ * its edges N, E, S, W and of its corners NW, NE, SE, SW.
  */
-export function skirtedGridGeometry(topology: IGridTopology): ISkirtedGridGeometry {
-    const vertexCount = topology.coordinates.length / 2;
-    const edges = new Map<string, [number, number]>();
-    const indices = topology.indices;
-    for (let triangle = 0; triangle < indices.length; triangle += 3) {
-        for (let corner = 0; corner < 3; corner++) {
-            const a = indices[triangle + corner]!;
-            const b = indices[triangle + ((corner + 1) % 3)]!;
-            const edgeKey = a < b ? `${a}/${b}` : `${b}/${a}`;
-            if (edges.has(edgeKey)) edges.delete(edgeKey);
-            else edges.set(edgeKey, [a, b]);
-        }
-    }
-    const skirtOf = new Map<number, number>();
-    const positions: number[] = [];
-    for (let vertex = 0; vertex < vertexCount; vertex++)
-        positions.push(topology.coordinates[vertex * 2]!, topology.coordinates[vertex * 2 + 1]!, 0);
-    const skirt = (vertex: number): number => {
-        let copy = skirtOf.get(vertex);
-        if (copy === undefined) {
-            copy = positions.length / 3;
-            positions.push(topology.coordinates[vertex * 2]!, topology.coordinates[vertex * 2 + 1]!, 1);
-            skirtOf.set(vertex, copy);
-        }
-        return copy;
-    };
-    const skirtIndices: number[] = [];
-    // Boundary edges keep the winding of their triangle, so the skirt faces outward.
-    for (const [a, b] of edges.values()) skirtIndices.push(a, skirt(a), b, b, skirt(a), skirt(b));
-    const all = new Uint32Array(indices.length + skirtIndices.length);
-    all.set(indices);
-    all.set(skirtIndices, indices.length);
-    return { positions: new Float32Array(positions), indices: all };
+export const INSTANCE_ATTRIBUTES = [
+    "instPlace",
+    "instRotation",
+    "instImagery",
+    "instElevation",
+    "instEdgeN",
+    "instEdgeE",
+    "instEdgeS",
+    "instEdgeW",
+    "instCornerNW",
+    "instCornerNE",
+    "instCornerSE",
+    "instCornerSW",
+] as const;
+export type InstanceAttribute = (typeof INSTANCE_ATTRIBUTES)[number];
+
+/**
+ * The predefined grid of every instance, as in SpaceXR: `cells x cells` cells whose four edges are refined with a
+ * vertex in the middle of each cell side, the `Finer` junction variant on every edge. Its edges then hold the vertices
+ * of any neighbour one level finer, and the shader moves the edge midpoints onto the edge of a coarser neighbour.
+ */
+export function refinedGridTopology(cells: number): IGridTopology {
+    return createJunctionGridTopology(cells, cells, {
+        [TileNeighbor.N]: NeighborLod.Finer,
+        [TileNeighbor.E]: NeighborLod.Finer,
+        [TileNeighbor.S]: NeighborLod.Finer,
+        [TileNeighbor.W]: NeighborLod.Finer,
+    });
 }
 
 /**
  * One predefined grid drawn once per instance: a Babylon mesh whose instance attributes are vertex buffers with a
- * divisor of one, drawn with `forcedInstanceCount`.
+ * divisor of one, drawn with `forcedInstanceCount`. `position` holds the `u, v` of each vertex.
  */
 export class InstancedGrid {
     public readonly mesh: Mesh;
@@ -72,17 +59,22 @@ export class InstancedGrid {
         material: Material,
     ) {
         this.mesh = new Mesh(name, scene);
-        const geometry = skirtedGridGeometry(topology);
+        const positions = new Float32Array((topology.coordinates.length / 2) * 3);
+        for (let vertex = 0; vertex < topology.coordinates.length / 2; vertex++) {
+            positions[vertex * 3] = topology.coordinates[vertex * 2]!;
+            positions[vertex * 3 + 1] = topology.coordinates[vertex * 2 + 1]!;
+        }
         const vertexData = new VertexData();
-        vertexData.positions = geometry.positions;
-        vertexData.indices = geometry.indices;
+        vertexData.positions = positions;
+        vertexData.indices = topology.indices;
         vertexData.applyToMesh(this.mesh, false);
         this.mesh.material = material;
         // Instances are placed in the shader: the mesh has no meaningful bounds, and the runtimes cull the tiles.
         this.mesh.alwaysSelectAsActiveMesh = true;
         this.mesh.doNotSyncBoundingInfo = true;
         this.mesh.isPickable = false;
-        this.reserve(64);
+        this.reserve(256);
+        this.resize(0);
     }
 
     /** Instances drawn. */
@@ -109,7 +101,7 @@ export class InstancedGrid {
     }
 
     /** Uploads the values of attributes after they were written. */
-    public upload(...names: InstanceAttribute[]): void {
+    public upload(...names: readonly InstanceAttribute[]): void {
         for (const name of names) this.buffers.get(name)!.updateDirectly(this.data.get(name)!, 0);
     }
 

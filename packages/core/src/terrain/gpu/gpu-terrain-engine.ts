@@ -1,8 +1,9 @@
+import type { Camera } from "@babylonjs/core/Cameras/camera.js";
 import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight.js";
+import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
+import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
-import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial.js";
-import type { Camera } from "@babylonjs/core/Cameras/camera.js";
 import type { Observer } from "@babylonjs/core/Misc/observable.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import type {
@@ -12,18 +13,17 @@ import type {
     ITileDeactivationContext,
     ITilePresentationContext,
 } from "@spacexr/3d-tiles-runtime";
-import { JunctionGridTopologyCache, NeighborLod, SAME_EDGE_LODS, type GridEdgeLods } from "@spacexr/grid";
-import { DrapeInstanceCut, DrapeInstanceEdge, type IDrapeInstance } from "@spacexr/raster";
-import { TileNeighbor, tileAreaInAncestor } from "@spacexr/tiles";
+import { DrapeInstanceCut, type IDrapeInstance } from "@spacexr/raster";
 
 import type { IBabylonTileResourceStatistics } from "../../monitor/runtime-monitor";
 import type { BabylonRasterPages } from "../../raster/raster-pages";
 import type { ITerrainEngine, ITerrainEngineInputs } from "../terrain-engine";
 import { regionWithHeights, tileIdentity, tileRegion } from "../terrain-tile";
 import { ElevationPages } from "./elevation-pages";
-import { GridShapes, tileCenterEcef, tileCenterLatitude, tileCenterLongitude } from "./grid-shapes";
-import { InstancedGrid, INSTANCE_ATTRIBUTES } from "./instanced-grid";
+import { GridShapes, tileCenterEcef, tileCenterLongitude } from "./grid-shapes";
+import { InstancedGrid, INSTANCE_ATTRIBUTES, refinedGridTopology, type InstanceAttribute } from "./instanced-grid";
 import { INSTANCED_GRID_FRAGMENT, INSTANCED_GRID_VERTEX } from "./instanced-grid-shaders";
+import { PickSurface } from "./pick-surface";
 
 export interface IGpuTerrainEngineOptions {
     /** Cells per grid side. Defaults to 16, like the mesh engine. */
@@ -34,8 +34,8 @@ export interface IGpuTerrainEngineOptions {
     holdMilliseconds?: number;
     /** Heights per elevation page side: the DEM tile size plus one. Defaults to 257. */
     elevationPageSize?: number;
-    /** Skirt depth as a fraction of the tile width. Defaults to 0.02. */
-    skirtRatio?: number;
+    /** Cells per side of the grids the camera picks, one per terrain tile. Defaults to 8. */
+    pickCells?: number;
 }
 
 /** Terrain tile known to the GPU engine. */
@@ -48,58 +48,58 @@ type Activation = ITileActivationContext<IEcefSpatialState, IGpuTerrainHandle, n
 type Deactivation = ITileDeactivationContext<IEcefSpatialState, IGpuTerrainHandle, never>;
 type Presentation = ITilePresentationContext<IEcefSpatialState, IGpuTerrainHandle, never>;
 
-/** Instance with the resources it acquired and its centre in double precision. */
+/** Elevation attributes of an instance: its interior, then its edges N, E, S, W and its corners NW, NE, SE, SW. */
+const ELEVATION_ATTRIBUTES: readonly InstanceAttribute[] = [
+    "instElevation",
+    "instEdgeN",
+    "instEdgeE",
+    "instEdgeS",
+    "instEdgeW",
+    "instCornerNW",
+    "instCornerNE",
+    "instCornerSE",
+    "instCornerSW",
+];
+
+/** Instance of the cut with its centre in double precision and the DEM tiles whose pages it acquired. */
 interface IPlacedInstance {
     instance: IDrapeInstance;
     center: { x: number; y: number; z: number };
-    demTile: ITileAddress | undefined;
+    demTiles: ITileAddress[];
 }
-
-const EQUATOR_METRES = 2 * Math.PI * 6378137;
 
 function key(address: ITileAddress): string {
     return `${address.lod}/${address.x}/${address.y}`;
 }
 
-/** Edge levels of the predefined grid drawn for a combination of junction edges. */
-function edgeLodsOf(coarserEdges: number): GridEdgeLods {
-    if (coarserEdges === 0) return SAME_EDGE_LODS;
-    const lod = (bit: number): NeighborLod => ((coarserEdges & bit) !== 0 ? NeighborLod.Coarser : NeighborLod.Same);
-    return {
-        [TileNeighbor.N]: lod(DrapeInstanceEdge.N),
-        [TileNeighbor.E]: lod(DrapeInstanceEdge.E),
-        [TileNeighbor.S]: lod(DrapeInstanceEdge.S),
-        [TileNeighbor.W]: lod(DrapeInstanceEdge.W),
-    };
-}
-
 /**
- * The GPU terrain engine: predefined normalized grids instanced once per tile of the instance cut, sized and placed
- * by four instance attributes, with positions on the ellipsoid and heights read from texture arrays.
+ * The GPU terrain engine: one predefined normalized grid, refined on its edges as in SpaceXR, instanced once per tile
+ * of the instance cut and drawn in one draw call. Instance attributes size and place each grid; positions on the
+ * ellipsoid and heights are read from texture arrays.
  *
- * The instance cut is the finer of the terrain cut and the imagery cut at each place, balanced across edges; each
- * instance draws the grid variant of its junction edges, so the terrain costs one draw call per variant in use. The
- * CPU only computes the cut when it changes, and the position of each tile centre relative to the camera every frame.
- * See `docs/draping.md` of 3d-tiles-core.
+ * The instance cut is the finer of the terrain cut and the imagery cut at each place, balanced across edges.
+ * Neighbouring instances join without cracks and without skirts: edges read their heights from the coarsest DEM
+ * touching them, and the edge midpoints of an instance lie on the edge of a coarser or same-level neighbour, or at
+ * the vertices of finer ones. The CPU only computes the cut when it changes, the position of each tile centre relative
+ * to the camera every frame, and a coarse surface the camera picks. See `docs/draping.md` of 3d-tiles-core.
  */
 export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
     public readonly name = "gpu";
     public readonly material: ShaderMaterial;
     public readonly shapes: GridShapes;
     public readonly elevations: ElevationPages;
+    public readonly grid: InstancedGrid;
+    public readonly pickSurface: PickSurface;
     private readonly scene: Scene;
     private readonly cells: number;
-    private readonly skirtRatio: number;
     private readonly elevation: ITerrainEngineInputs["elevation"];
     private readonly imageryPages: BabylonRasterPages | undefined;
     private readonly cut: DrapeInstanceCut;
-    private readonly topologies: JunctionGridTopologyCache;
-    private readonly grids = new Map<number, InstancedGrid>();
-    private readonly placed = new Map<number, IPlacedInstance[]>();
     private readonly presented = new Map<string, IGpuTerrainHandle>();
     private readonly handles = new Set<IGpuTerrainHandle>();
     private readonly pageObserver: Observer<ITileAddress> | undefined;
     private readonly cameraObserver: Observer<Camera>;
+    private placed: IPlacedInstance[] = [];
     private verticalScale: number;
     private dirty = true;
     private created = 0;
@@ -108,7 +108,6 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
     public constructor(inputs: ITerrainEngineInputs, options: IGpuTerrainEngineOptions = {}) {
         this.scene = inputs.scene;
         this.cells = options.cells ?? 16;
-        this.skirtRatio = options.skirtRatio ?? 0.02;
         this.elevation = inputs.elevation;
         this.imageryPages = inputs.wireframe ? undefined : inputs.imageryPages;
         this.verticalScale = inputs.elevation?.verticalScale ?? 1;
@@ -116,9 +115,10 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
             ...(options.maxInstanceDepth === undefined ? {} : { maxDepth: options.maxInstanceDepth }),
             ...(options.holdMilliseconds === undefined ? {} : { holdMilliseconds: options.holdMilliseconds }),
         });
-        this.topologies = new JunctionGridTopologyCache(this.cells);
-        this.shapes = new GridShapes(this.scene, this.cells);
+        // Shapes hold the half-cell lattice: the grid vertices and the edge midpoints.
+        this.shapes = new GridShapes(this.scene, 2 * this.cells);
         this.elevations = new ElevationPages(this.scene, inputs.elevation?.pyramid, options.elevationPageSize ?? 257);
+        this.pickSurface = new PickSurface(this.scene, inputs.elevation?.pyramid, this.verticalScale, options.pickCells ?? 8);
 
         this.material = new ShaderMaterial(
             "gpu-terrain",
@@ -126,7 +126,18 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
             { vertexSource: INSTANCED_GRID_VERTEX, fragmentSource: INSTANCED_GRID_FRAGMENT },
             {
                 attributes: ["position", ...INSTANCE_ATTRIBUTES],
-                uniforms: ["viewProjection", "cells", "verticalScale", "sunDirection", "baseColor", "ambient", "imagerySize"],
+                uniforms: [
+                    "viewProjection",
+                    "cells",
+                    "verticalScale",
+                    "baseColor",
+                    "sunDirection",
+                    "sunColor",
+                    "skyDirection",
+                    "skyColor",
+                    "groundColor",
+                    "imagerySize",
+                ],
                 samplers: ["shapes", "elevations", "imagery"],
                 defines: this.imageryPages ? ["#define IMAGERY"] : [],
             },
@@ -135,15 +146,16 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
         this.material.wireframe = inputs.wireframe;
         this.material.setFloat("cells", this.cells);
         this.material.setFloat("verticalScale", this.verticalScale);
-        this.material.setColor3("baseColor", new Color3(0.42, 0.45, 0.4));
-        this.material.setFloat("ambient", 0.35);
+        // The shaded colour of the mesh engine where no imagery is draped.
+        this.material.setColor3("baseColor", new Color3(0.47, 0.5, 0.45));
         this.material.setTexture("shapes", this.shapes.pool);
         this.material.setTexture("elevations", this.elevations.pool);
         if (this.imageryPages) {
             this.material.setTexture("imagery", this.imageryPages.pool);
             this.material.setFloat("imagerySize", this.imageryPages.size);
         }
-        this.updateSun();
+        this.updateLights();
+        this.grid = new InstancedGrid(this.scene, "gpu-terrain", refinedGridTopology(this.cells), this.material);
 
         this.pageObserver = this.imageryPages?.changed.add(() => (this.dirty = true));
         // The camera position is known once the scene computed its matrices: place the instances then.
@@ -193,10 +205,14 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
             if (handle.presented) continue;
             handle.presented = true;
             this.presented.set(key(handle.identity), handle);
-            this.elevation?.pyramid.retain(handle.identity);
-            // A tile shown again after its DEM left the cache reloads it.
             const pyramid = this.elevation?.pyramid;
-            if (pyramid && !pyramid.isResident(handle.identity)) void pyramid.tileHeights(handle.identity).then(() => (this.dirty = true));
+            pyramid?.retain(handle.identity);
+            // A tile shown again after its DEM left the cache reloads it, then reads it again.
+            if (pyramid && !pyramid.isResident(handle.identity))
+                void pyramid.tileHeights(handle.identity).then(() => {
+                    this.pickSurface.refresh(handle.identity);
+                    this.dirty = true;
+                });
         }
         this.dirty = true;
     }
@@ -212,15 +228,13 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
     }
 
     public getStatistics(): IBabylonTileResourceStatistics {
-        let gpuBytes = this.shapes.pool.gpuBytes + this.elevations.pool.gpuBytes;
-        for (const grid of this.grids.values()) gpuBytes += grid.gpuBytes;
         return {
             handles: this.handles.size,
             presented: this.presented.size,
             created: this.created,
             released: this.released,
             cpuBytes: 0,
-            gpuBytes,
+            gpuBytes: this.shapes.pool.gpuBytes + this.elevations.pool.gpuBytes + this.grid.gpuBytes,
         };
     }
 
@@ -237,17 +251,18 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
     public setVerticalScale(scale: number): void {
         this.verticalScale = scale;
         this.material.setFloat("verticalScale", scale);
+        this.pickSurface.setVerticalScale(scale);
     }
 
     public dispose(): void {
         this.scene.onBeforeCameraRenderObservable.remove(this.cameraObserver);
         if (this.pageObserver) this.imageryPages?.changed.remove(this.pageObserver);
-        for (const instances of this.placed.values()) this.releaseResources(instances);
-        this.placed.clear();
-        for (const grid of this.grids.values()) grid.dispose();
-        this.grids.clear();
+        this.releaseResources(this.placed);
+        this.placed = [];
         for (const handle of this.presented.values()) this.elevation?.pyramid.release(handle.identity);
         this.presented.clear();
+        this.grid.dispose();
+        this.pickSurface.dispose();
         this.material.dispose();
         this.shapes.dispose();
         this.elevations.dispose();
@@ -271,92 +286,91 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
         const terrain = [...this.presented.values()].map((handle) => handle.identity);
         const imagery = this.imageryPages ? this.imageryPages.presented.addresses() : [];
         const instances = this.cut.update(terrain, imagery, now);
+        this.pickSurface.update(terrain);
 
         // Acquire the resources of the new cut before releasing those of the previous one, so shared ones stay.
-        const byVariant = new Map<number, IPlacedInstance[]>();
-        for (const instance of instances) {
-            const demTile = this.elevation ? this.elevation.pyramid.rasters.areaOf(instance.terrain).ancestor : undefined;
-            const placed: IPlacedInstance = { instance, center: tileCenterEcef(instance.address), demTile };
-            const variant = byVariant.get(instance.coarserEdges);
-            if (variant) variant.push(placed);
-            else byVariant.set(instance.coarserEdges, [placed]);
-        }
-        const previous = [...this.placed.values()];
-        this.placed.clear();
-        for (const [variant, list] of byVariant) this.placed.set(variant, list);
-
-        for (const [variant, list] of byVariant) this.write(this.grid(variant), list);
-        for (const [variant, grid] of this.grids) if (!byVariant.has(variant)) grid.resize(0);
-        for (const instances of previous) this.releaseResources(instances);
-        this.place();
-    }
-
-    private grid(variant: number): InstancedGrid {
-        let grid = this.grids.get(variant);
-        if (!grid) {
-            grid = new InstancedGrid(this.scene, `gpu-terrain-${variant}`, this.topologies.get(edgeLodsOf(variant)), this.material);
-            this.grids.set(variant, grid);
-        }
-        return grid;
-    }
-
-    /** Writes the shape, rotation, elevation and imagery of the instances of one grid variant. */
-    private write(grid: InstancedGrid, list: readonly IPlacedInstance[]): void {
-        grid.resize(list.length);
+        const previous = this.placed;
+        const grid = this.grid;
+        grid.resize(instances.length);
         const place = grid.attribute("instPlace");
         const rotation = grid.attribute("instRotation");
-        const elevation = grid.attribute("instElevation");
-        const imagery = grid.attribute("instImagery");
-        list.forEach(({ instance, demTile }, index) => {
+        const imageryAreas = grid.attribute("instImagery");
+        const elevationAreas = ELEVATION_ATTRIBUTES.map((name) => grid.attribute(name));
+        this.placed = instances.map((instance, index) => {
             const { address } = instance;
             const offset = index * 4;
+            const demTiles: ITileAddress[] = [];
             place[offset + 3] = this.shapes.acquire(address.lod, address.y) ?? 0;
 
             const longitude = tileCenterLongitude(address);
-            const width = (EQUATOR_METRES / 2 ** address.lod) * Math.cos(tileCenterLatitude(address));
-            rotation.set([Math.cos(longitude), Math.sin(longitude), (2 * Math.PI) / 2 ** address.lod, width * this.skirtRatio], offset);
-
-            const demLayer = demTile ? this.elevations.acquire(demTile) : undefined;
-            if (demTile && demLayer !== undefined) {
-                const area = tileAreaInAncestor(address, address.lod - demTile.lod);
-                elevation.set([area.west, area.north, area.size, demLayer], offset);
-            } else elevation.set([0, 0, 1, -1], offset);
+            rotation.set([Math.cos(longitude), Math.sin(longitude), (2 * Math.PI) / 2 ** address.lod, instance.finerEdges], offset);
 
             const cover = this.imageryPages?.resident.cover(address);
-            if (cover) imagery.set([cover.west, cover.north, cover.size, cover.value], offset);
-            else imagery.set([0, 0, 1, -1], offset);
+            imageryAreas.set(cover ? [cover.west, cover.north, cover.size, cover.value] : [0, 0, 1, -1], offset);
+
+            const own = this.elevationArea(address, instance.terrain, demTiles);
+            const sources = [instance.terrain, ...instance.edgeTerrain, ...instance.cornerTerrain];
+            sources.forEach((terrainTile, slot) => {
+                // A neighbour DEM not in memory falls back to the instance's own.
+                const area = slot === 0 ? own : (this.elevationArea(address, terrainTile, demTiles) ?? own);
+                elevationAreas[slot]!.set(area ?? [0, 0, 1, -1], offset);
+            });
+            return { instance, center: tileCenterEcef(address), demTiles };
         });
-        grid.upload("instRotation", "instElevation", "instImagery");
+        grid.upload("instRotation", "instImagery", ...ELEVATION_ATTRIBUTES);
+        this.releaseResources(previous);
+        this.place();
+    }
+
+    /**
+     * Area of a tile in the DEM tile serving a terrain tile and the layer of its page, acquiring the page.
+     *
+     * @returns `undefined` when there is no elevation or the DEM tile is not in memory.
+     */
+    private elevationArea(
+        address: ITileAddress,
+        terrain: ITileAddress,
+        demTiles: ITileAddress[],
+    ): [number, number, number, number] | undefined {
+        if (!this.elevation) return undefined;
+        const demTile = this.elevation.pyramid.rasters.areaOf(terrain).ancestor;
+        const layer = this.elevations.acquire(demTile);
+        if (layer === undefined) return undefined;
+        demTiles.push(demTile);
+        // The tile is never coarser than the DEM tile; it may lie outside it, on its edge, for a neighbour's DEM.
+        const scale = 2 ** (address.lod - demTile.lod);
+        return [address.x / scale - demTile.x, address.y / scale - demTile.y, 1 / scale, layer];
     }
 
     /** Releases the shapes and elevation pages acquired for instances. */
     private releaseResources(instances: readonly IPlacedInstance[]): void {
-        for (const { instance, demTile } of instances) {
+        for (const { instance, demTiles } of instances) {
             this.shapes.release(instance.address.lod, instance.address.y);
-            if (demTile) this.elevations.release(demTile);
+            for (const demTile of demTiles) this.elevations.release(demTile);
         }
     }
 
-    /** Writes the tile centres relative to the camera, in double precision, and the sun direction. */
+    /** Writes the tile centres relative to the camera, in double precision, and the light uniforms. */
     private place(): void {
         const eye = this.scene.floatingOriginOffset;
-        for (const [variant, list] of this.placed) {
-            const grid = this.grids.get(variant);
-            if (!grid) continue;
-            const place = grid.attribute("instPlace");
-            list.forEach(({ center }, index) => {
-                place[index * 4] = center.x - eye.x;
-                place[index * 4 + 1] = center.y - eye.y;
-                place[index * 4 + 2] = center.z - eye.z;
-            });
-            grid.upload("instPlace");
-        }
-        this.updateSun();
+        const place = this.grid.attribute("instPlace");
+        this.placed.forEach(({ center }, index) => {
+            place[index * 4] = center.x - eye.x;
+            place[index * 4 + 1] = center.y - eye.y;
+            place[index * 4 + 2] = center.z - eye.z;
+        });
+        this.grid.upload("instPlace");
+        this.updateLights();
     }
 
-    private updateSun(): void {
-        const sun = this.scene.lights.find((light): light is DirectionalLight => light instanceof DirectionalLight);
-        const direction = sun ? sun.direction.negate().normalize() : new Vector3(0, 0, 1);
-        this.material.setVector3("sunDirection", direction);
+    /** Passes the first directional and hemispheric lights of the scene, as the standard material sees them. */
+    private updateLights(): void {
+        const sun = this.scene.lights.find((light): light is DirectionalLight => light instanceof DirectionalLight && light.isEnabled());
+        const sky = this.scene.lights.find((light): light is HemisphericLight => light instanceof HemisphericLight && light.isEnabled());
+        this.material.setVector3("sunDirection", sun ? sun.direction.negate().normalize() : Vector3.Up());
+        this.material.setColor3("sunColor", sun ? sun.diffuse.scale(sun.intensity) : Color3.White());
+        this.material.setVector3("skyDirection", sky ? sky.direction.normalizeToNew() : Vector3.Up());
+        this.material.setColor3("skyColor", sky ? sky.diffuse.scale(sky.intensity) : Color3.Black());
+        this.material.setColor3("groundColor", sky ? sky.groundColor.scale(sky.intensity) : Color3.Black());
     }
 }
