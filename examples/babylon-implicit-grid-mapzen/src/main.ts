@@ -93,6 +93,10 @@ async function run(): Promise<void> {
         throw new RangeError(
             "The heights parameter must be coarsest, finest or average.",
         );
+    // Refined tiles coarsen only once their error drops below (1 - hysteresis) times the threshold.
+    const hysteresis = Number(parameters.get("hysteresis") ?? "0.2");
+    // Refined tiles wait this many frames before coarsening, so that a neighbour leaving the view does not flicker them.
+    const coarsenDelay = Number(parameters.get("coarsenDelay") ?? "20");
     const demInterpolation = parameters.get("interpolation") ?? "cubic";
     if (
         demInterpolation !== "nearest" &&
@@ -253,7 +257,10 @@ async function run(): Promise<void> {
             },
             // The geometric error of an imagery tile is one texel: at most two texels per screen pixel.
             maxScreenSpaceError: 2,
-            refinementHysteresisRatio: 0.2,
+            refinementHysteresisRatio: hysteresis,
+            // Children outside the view load in the background, so that turning the camera never falls back to their parent.
+            preloadSiblings: true,
+            coarseningDelayFrames: coarsenDelay,
             maxConcurrentLoads: 12,
             cache: {
                 maxContentEntries: 512,
@@ -293,6 +300,8 @@ async function run(): Promise<void> {
                               ),
                           ),
                           maxLOD: dem.source.metrics.maxLOD,
+                          // Room for the DEM tiles retained by the displayed cut, and for the tiles loading around it.
+                          cacheEntries: 512,
                           // Levels below the DEM are generated down to the deepest grid level.
                           generation: {
                               maxLOD: TILE_METRICS.maxLOD,
@@ -334,7 +343,10 @@ async function run(): Promise<void> {
         uri: "memory://geodesic-grid/tileset.json",
         adapter,
         maxScreenSpaceError: 10,
-        refinementHysteresisRatio: 0.2,
+        refinementHysteresisRatio: hysteresis,
+        // Children outside the view load in the background, so that turning the camera never falls back to their parent.
+        preloadSiblings: true,
+        coarseningDelayFrames: coarsenDelay,
         maxConcurrentLoads: 12,
         instrumentation: { enabled: monitoringEnabled },
         // Neighbouring tiles stay within one level, so that every edge junction connects.
@@ -384,6 +396,15 @@ async function run(): Promise<void> {
     await Promise.all([driver.start(), imageryDriver?.start()]);
     monitor.setStartupMilliseconds(performance.now() - startupStartedAt);
     status.textContent = `Global WebMercator coverage, ${source.dataSources.length} roots, LOD ${source.metrics.minLOD}..${source.metrics.maxLOD}`;
+
+    // Objects of the example, for probes run from the browser console.
+    (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = {
+        runtime,
+        imageryRuntime,
+        pipeline,
+        drape,
+        imageryPages,
+    };
 
     engine.runRenderLoop(() => {
         pipeline.updateJunctions();

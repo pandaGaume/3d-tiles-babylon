@@ -37,23 +37,97 @@ function key(address: ITileAddress): string {
     return `${address.lod}/${address.x}/${address.y}`;
 }
 
-/** Tracks the presented tiles of a quadtree to find the level displayed across each tile edge. */
+/** Whether `outer` contains `inner`, itself included. */
+function contains(outer: ITileAddress, inner: ITileAddress): boolean {
+    if (inner.lod < outer.lod) return false;
+    const scale = 2 ** (inner.lod - outer.lod);
+    return (
+        Math.floor(inner.x / scale) === outer.x &&
+        Math.floor(inner.y / scale) === outer.y
+    );
+}
+
+/**
+ * Tracks the last known cut of a quadtree to find the level displayed across each tile edge.
+ *
+ * A tile hidden while no displayed tile overlaps it, typically because it left the view, stays known as a ghost: its
+ * neighbours keep connecting to its level, so that turning the camera does not change their edges back and forth.
+ * A ghost leaves when a tile overlapping it is presented, or when its resource is released.
+ */
+export interface IDisplayedTilesOptions {
+    /** Called when a tile joins the known cut, to keep the data its edges are computed from. */
+    onTrack?: (address: ITileAddress) => void;
+    /** Called when a tile leaves the known cut, displayed or ghost. */
+    onForget?: (address: ITileAddress) => void;
+}
+
 export class DisplayedTiles {
+    public constructor(private readonly options: IDisplayedTilesOptions = {}) {}
+
     private readonly counts = new Map<string, number>();
+    private readonly addresses = new Map<string, ITileAddress>();
+    private readonly ghosts = new Set<string>();
     private readonly levelCounts = new Map<number, number>();
     private sortedLevels: number[] = [];
 
+    /** Records a presented tile; ghosts it overlaps leave. */
     public add(address: ITileAddress): void {
-        this.counts.set(key(address), (this.counts.get(key(address)) ?? 0) + 1);
+        const tileKey = key(address);
+        if (this.ghosts.delete(tileKey))
+            return this.removeOverlappingGhosts(address);
+        const tracked = this.counts.has(tileKey);
+        this.counts.set(tileKey, (this.counts.get(tileKey) ?? 0) + 1);
+        this.addresses.set(tileKey, { ...address });
         this.countLevel(address.lod, 1);
+        if (!tracked) this.options.onTrack?.(address);
+        this.removeOverlappingGhosts(address);
     }
 
+    /** Records a hidden tile: it leaves when a displayed tile overlaps it, and stays as a ghost otherwise. */
+    public hide(address: ITileAddress): void {
+        const tileKey = key(address);
+        if (!this.counts.has(tileKey) || this.ghosts.has(tileKey)) return;
+        if (this.counts.get(tileKey)! > 1 || this.overlapsDisplayed(address))
+            this.delete(address);
+        else this.ghosts.add(tileKey);
+    }
+
+    /** Whether a tile is known only as a ghost, hidden while nothing displayed overlaps it. */
+    public isGhost(address: ITileAddress): boolean {
+        return this.ghosts.has(key(address));
+    }
+
+    /** Forgets a tile, displayed or ghost. */
     public delete(address: ITileAddress): void {
-        if (!this.counts.has(key(address))) return;
-        const count = this.counts.get(key(address))! - 1;
-        if (count > 0) this.counts.set(key(address), count);
-        else this.counts.delete(key(address));
+        const tileKey = key(address);
+        if (!this.counts.has(tileKey)) return;
+        const count = this.counts.get(tileKey)! - 1;
+        if (count > 0) this.counts.set(tileKey, count);
+        else {
+            this.counts.delete(tileKey);
+            this.addresses.delete(tileKey);
+            this.ghosts.delete(tileKey);
+        }
         this.countLevel(address.lod, -1);
+        if (count <= 0) this.options.onForget?.(address);
+    }
+
+    /** Whether a displayed tile, not a ghost, is an ancestor or a descendant of a tile. */
+    private overlapsDisplayed(address: ITileAddress): boolean {
+        for (const [tileKey, other] of this.addresses) {
+            if (this.ghosts.has(tileKey) || tileKey === key(address)) continue;
+            if (contains(other, address) || contains(address, other))
+                return true;
+        }
+        return false;
+    }
+
+    private removeOverlappingGhosts(address: ITileAddress): void {
+        for (const ghost of [...this.ghosts]) {
+            const other = this.addresses.get(ghost)!;
+            if (contains(other, address) || contains(address, other))
+                this.delete(other);
+        }
     }
 
     public has(address: ITileAddress): boolean {

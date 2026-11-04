@@ -90,3 +90,51 @@ describe("DisplayedTiles", () => {
         expect(tiles.touching(0, 0.3)).toEqual([{ lod: 2, x: 3, y: 1 }]);
     });
 });
+
+describe("DisplayedTiles ghosts", () => {
+    const tile = (lod: number, x: number, y: number) => ({ lod, x, y });
+
+    it("keeps a tile hidden outside the view as a ghost its neighbours still connect to", () => {
+        const tiles = new DisplayedTiles();
+        tiles.add(tile(3, 3, 2));
+        tiles.add(tile(2, 2, 1));
+        tiles.hide(tile(2, 2, 1));
+
+        expect(tiles.isGhost(tile(2, 2, 1))).toBe(true);
+        expect(tiles.lodAcross(tile(3, 3, 2), TileNeighbor.E)).toBe(2);
+    });
+
+    it("forgets a hidden tile that a displayed tile overlaps", () => {
+        const tiles = new DisplayedTiles();
+        tiles.add(tile(3, 4, 2));
+        tiles.add(tile(2, 2, 1));
+        tiles.hide(tile(2, 2, 1));
+
+        expect(tiles.has(tile(2, 2, 1))).toBe(false);
+    });
+
+    it("drops a ghost when a tile overlapping it is presented, or when it is released", () => {
+        const tiles = new DisplayedTiles();
+        tiles.add(tile(2, 2, 1));
+        tiles.hide(tile(2, 2, 1));
+        tiles.add(tile(3, 5, 3));
+        expect(tiles.has(tile(2, 2, 1))).toBe(false);
+
+        tiles.add(tile(2, 0, 0));
+        tiles.hide(tile(2, 0, 0));
+        tiles.delete(tile(2, 0, 0));
+        expect(tiles.has(tile(2, 0, 0))).toBe(false);
+        expect(tiles.touching(0.1, 0.1)).toEqual([]);
+    });
+
+    it("presents a ghost again as a displayed tile", () => {
+        const tiles = new DisplayedTiles();
+        tiles.add(tile(2, 1, 1));
+        tiles.hide(tile(2, 1, 1));
+        tiles.add(tile(2, 1, 1));
+
+        expect(tiles.isGhost(tile(2, 1, 1))).toBe(false);
+        tiles.delete(tile(2, 1, 1));
+        expect(tiles.has(tile(2, 1, 1))).toBe(false);
+    });
+});

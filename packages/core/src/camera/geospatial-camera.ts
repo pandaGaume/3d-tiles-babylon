@@ -1,5 +1,7 @@
 import { GeospatialClippingBehavior } from "@babylonjs/core/Behaviors/Cameras/geospatialClippingBehavior.js";
 import { GeospatialCamera } from "@babylonjs/core/Cameras/geospatialCamera.js";
+// The camera picks the surface under the pointer to zoom and rotate around it, which needs rays.
+import "@babylonjs/core/Culling/ray.js";
 import { Vector2, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import { GeodeticSystem } from "@spacexr/geodesy";

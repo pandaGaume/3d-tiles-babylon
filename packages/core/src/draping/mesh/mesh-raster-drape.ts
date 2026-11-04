@@ -15,12 +15,20 @@ export interface IMeshRasterDrapeOptions {
      * to 4, 256 pages. The table of each mesh holds `2^maxDepth x 2^maxDepth` cells.
      */
     maxDepth?: number;
+    /**
+     * Time a tile keeps its drape depth after the imagery cut beneath it became coarser, in milliseconds. Refinements
+     * apply at once; coarsenings wait, so that the transient cuts of a replacement, or a cut coarsening for a moment
+     * while the camera turns, do not flash coarser imagery. The finer pages stay resident meanwhile. Defaults to 500.
+     */
+    depthHoldMilliseconds?: number;
 }
 
 interface IDrapedMesh {
     address: ITileAddress;
     drape: IMeshRasterDrape;
     dirty: boolean;
+    /** Time since the cut beneath the tile has been coarser than its depth, `undefined` otherwise. */
+    coarserSince: number | undefined;
 }
 
 /** Statistics of the mesh draping engine. */
@@ -50,6 +58,7 @@ export class MeshRasterDrape implements IMeshRasterDrapeSource {
     /** Cell tables, one layer per mesh. */
     public readonly tables: TextureArrayPool;
     public readonly maxDepth: number;
+    public readonly depthHoldMilliseconds: number;
     private readonly meshes = new Map<AbstractMesh, IDrapedMesh>();
     private readonly plugins: RasterDrapeMaterialPlugin[] = [];
     private readonly pageObserver: Observer<ITileAddress>;
@@ -65,6 +74,7 @@ export class MeshRasterDrape implements IMeshRasterDrapeSource {
         this.maxDepth = options.maxDepth ?? 4;
         if (!Number.isInteger(this.maxDepth) || this.maxDepth < 0 || this.maxDepth > 6)
             throw new RangeError("The maximum drape depth must be an integer from 0 to 6.");
+        this.depthHoldMilliseconds = Math.max(0, options.depthHoldMilliseconds ?? 500);
         const cells = 2 ** this.maxDepth;
         this.table = new Float32Array(cells * cells * 4);
         this.tables = new TextureArrayPool(scene, { size: cells, format: "rgba32f", initialLayers: 128 });
@@ -99,11 +109,16 @@ export class MeshRasterDrape implements IMeshRasterDrapeSource {
         for (const plugin of this.plugins) plugin.isEnabled = value;
     }
 
-    /** Registers the mesh of a terrain tile. */
+    /** Registers the mesh of a terrain tile and writes its table at once, before the mesh is first drawn. */
     public add(mesh: AbstractMesh, address: ITileAddress): void {
-        const draped: IDrapedMesh = { address: { ...address }, drape: { depth: 0, tableLayer: this.tables.reserve() ?? -1 }, dirty: true };
+        const draped: IDrapedMesh = {
+            address: { ...address },
+            drape: { depth: -1, tableLayer: this.tables.reserve() ?? -1 },
+            dirty: false,
+            coarserSince: undefined,
+        };
         this.meshes.set(mesh, draped);
-        this.dirty = true;
+        this.write(draped, performance.now());
     }
 
     public remove(mesh: AbstractMesh): void {
@@ -113,14 +128,17 @@ export class MeshRasterDrape implements IMeshRasterDrapeSource {
         this.meshes.delete(mesh);
     }
 
-    /** Recomputes the bindings the cut or the pages changed. Call once per frame, before rendering. */
+    /** Recomputes the bindings the cut or the pages changed, and applies held coarsenings. Call once per frame. */
     public update(): void {
         if (!this.dirty) return;
         this.dirty = false;
+        const now = performance.now();
         for (const draped of this.meshes.values()) {
-            if (!draped.dirty) continue;
+            if (!draped.dirty && draped.coarserSince === undefined) continue;
             draped.dirty = false;
-            this.write(draped);
+            this.write(draped, now);
+            // A held coarsening is checked again at the next frame.
+            if (draped.coarserSince !== undefined) this.dirty = true;
         }
     }
 
@@ -137,6 +155,7 @@ export class MeshRasterDrape implements IMeshRasterDrapeSource {
             emptyCells: 0,
         };
         for (const { address, drape } of this.meshes.values()) {
+            if (drape.depth < 0) continue;
             statistics.depths[drape.depth] = (statistics.depths[drape.depth] ?? 0) + 1;
             for (const cover of drapeCells(this.rasters.resident, address, drape.depth)) {
                 if (!cover) statistics.emptyCells++;
@@ -155,9 +174,14 @@ export class MeshRasterDrape implements IMeshRasterDrapeSource {
     }
 
     /** Computes the depth and cells of a terrain tile and writes its table. */
-    private write(draped: IDrapedMesh): void {
+    private write(draped: IDrapedMesh, now: number): void {
         if (draped.drape.tableLayer < 0) draped.drape.tableLayer = this.tables.reserve() ?? -1;
-        const depth = drapeDepth(this.rasters.presented, draped.address, this.maxDepth);
+        const cutDepth = drapeDepth(this.rasters.presented, draped.address, this.maxDepth);
+        if (cutDepth >= draped.drape.depth) draped.coarserSince = undefined;
+        else if (draped.coarserSince === undefined) draped.coarserSince = now;
+        const held = draped.coarserSince !== undefined && now - draped.coarserSince < this.depthHoldMilliseconds;
+        if (!held) draped.coarserSince = undefined;
+        const depth = held ? draped.drape.depth : cutDepth;
         draped.drape.depth = depth;
         if (draped.drape.tableLayer < 0) return;
         const count = 2 ** depth;

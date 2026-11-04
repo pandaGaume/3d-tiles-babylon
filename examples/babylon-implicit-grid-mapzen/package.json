@@ -9,7 +9,7 @@
         "node": ">=20.11.0"
     },
     "scripts": {
-        "dev": "vite",
+        "dev": "vite --force",
         "build": "vite build",
         "preview": "vite preview",
         "typecheck": "tsc -p tsconfig.json --noEmit",

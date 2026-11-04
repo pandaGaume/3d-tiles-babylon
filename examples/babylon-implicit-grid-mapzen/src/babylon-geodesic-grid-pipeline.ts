@@ -209,7 +209,11 @@ export class BabylonGeodesicGridPipeline
     private readonly handles = new Set<IBabylonGeodesicGridHandle>();
     private readonly materialsByLod = new Map<number, StandardMaterial>();
     private readonly topologies: JunctionGridTopologyCache;
-    private readonly displayed = new DisplayedTiles();
+    // The DEM tiles of the known cut stay in memory: edge heights and normals read them across tiles.
+    private readonly displayed = new DisplayedTiles({
+        onTrack: (address) => this.elevation?.pyramid.retain(address),
+        onForget: (address) => this.elevation?.pyramid.release(address),
+    });
     private readonly junctions: JunctionPolicy;
     private readonly edgeHeights: EdgeHeightPolicy;
     private readonly subdivisions: number;
@@ -317,11 +321,22 @@ export class BabylonGeodesicGridPipeline
         >,
     ): void {
         for (const resource of context.resources) {
-            resource.handle.metadataHandle = resource.metadataHandle;
-            if (!resource.handle.presented)
-                this.displayed.add(resource.handle.identity);
-            resource.handle.presented = true;
-            resource.handle.mesh.isVisible = true;
+            const handle = resource.handle;
+            handle.metadataHandle = resource.metadataHandle;
+            if (!handle.presented) this.displayed.add(handle.identity);
+            handle.presented = true;
+            handle.mesh.isVisible = true;
+            // A tile shown again after its DEM left the cache reloads it, then rebuilds its edges.
+            const pyramid = this.elevation?.pyramid;
+            if (
+                pyramid &&
+                handle.heightAt &&
+                !pyramid.isResident(handle.identity)
+            )
+                void pyramid.tileHeights(handle.identity).then(() => {
+                    handle.edgeLevels = "";
+                    this.junctionsDirty = true;
+                });
         }
         this.junctionsDirty = true;
     }
@@ -335,7 +350,7 @@ export class BabylonGeodesicGridPipeline
     ): void {
         for (const resource of context.resources) {
             if (resource.handle.presented)
-                this.displayed.delete(resource.handle.identity);
+                this.displayed.hide(resource.handle.identity);
             resource.handle.presented = false;
             resource.handle.mesh.isVisible = false;
             resource.handle.label.style.display = "none";
@@ -738,7 +753,8 @@ export class BabylonGeodesicGridPipeline
 
     private disposeHandle(handle: IBabylonGeodesicGridHandle): void {
         if (!this.handles.delete(handle)) return;
-        if (handle.presented) {
+        // A ghost leaves with its resource as well.
+        if (handle.presented || this.displayed.isGhost(handle.identity)) {
             this.displayed.delete(handle.identity);
             this.junctionsDirty = true;
         }

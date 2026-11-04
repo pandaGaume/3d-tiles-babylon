@@ -39,4 +39,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- The example dev servers start with `vite --force`: Vite serves the packages linked from 3d-tiles-core with a version query that a restart alone does not change, so browsers kept running the previous build of a rebuilt package from their cache.
+
+- `createGeospatialCamera` imports the Babylon ray module, without which the `GeospatialCamera` could not pick the surface under the pointer to zoom and rotate around it ("Ray needs to be imported before").
+- Imagery no longer flickers while the camera turns: a mesh drape is written as soon as the mesh is registered, before its first draw, and its depth decreases only after the imagery cut has stayed coarser for `depthHoldMilliseconds`, 500 ms by default.
+- The implicit grid example retains the DEM tiles of the displayed and ghost tiles, and reloads the DEM of a tile shown again after it left the cache: with siblings preloaded, the DEM cache otherwise evicted DEM tiles still displayed, and their edges cracked.
+- The implicit grid example keeps the last known level of tiles that left the view (ghosts) when connecting the edges of their neighbours, so that turning the camera no longer rebuilds edges back and forth.
+- The implicit grid example enables `preloadSiblings` in both runtimes, so that turning the camera no longer falls back to coarser terrain and imagery; `hysteresis` sets the refinement hysteresis ratio, 0.2 by default, and `coarsenDelay` the coarsening delay, 20 frames by default.
+
 - GPU frame time monitoring with Babylon.js 9.33, which no longer registers time queries when `Engine` is imported.
