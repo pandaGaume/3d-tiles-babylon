@@ -34,26 +34,27 @@ Tiles start with a 0/0 m height range. When a DEM is loaded, the tile reports it
 
 The camera starts above the Mont Blanc summit. URL parameters:
 
-| Parameter                  | Effect                                                                                                                                                |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `elevation=0`              | Flat grids, no DEM requests                                                                                                                           |
-| `scale=2`                  | Initial altitude scale; the panel slider changes it live                                                                                              |
-| `solid=1`                  | Shaded rendering with a sun light instead of the wireframe                                                                                            |
-| `radius=250`               | Initial camera distance to the summit in metres                                                                                                       |
-| `pitch=50`                 | Initial camera pitch in degrees                                                                                                                       |
-| `junctions=coarse`         | Junction policy between levels of detail: `fine` (default), `coarse` or `none`                                                                        |
-| `heights=finest`           | Height of edge vertices shared by several levels: DEM of the `coarsest` (default), `finest` or `average` level                                        |
-| `balance=0`                | Disables the 2:1 quadtree balance, which keeps neighbouring tiles within one level of detail                                                          |
-| `interpolation=bilinear`   | DEM levels generated below level 15: `cubic` (default), `bilinear`, `linear` or `nearest`                                                             |
-| `engine=gpu`               | Terrain engine: `mesh` (default), one CPU mesh per tile, or `gpu`, predefined grids instanced on the GPU                                              |
-| `junctionBudget=4`         | Main-thread milliseconds per frame for rebuilding the grids whose neighbours changed, 4 by default                                                    |
-| `hysteresis=0.2`           | Refined tiles coarsen only once their error drops below `1 - hysteresis` times the threshold                                                          |
-| `coarsenDelay=20`          | Frames a refined tile waits before coarsening                                                                                                         |
-| `imagery=none`             | Imagery draped on shaded grids: `debug` (default), `none`, or the name of a local module (see [Imagery](#imagery))                                    |
-| `kmax=4`                   | Deepest drape, in levels below the terrain tile                                                                                                       |
-| `subtrees=13/4252/2920/13` | Terrain subtrees with their own levels, `lod/x/y/maxLOD` separated by commas: from each root tile down, the grid stops at `maxLOD`, or refines deeper |
-| `renderer=webgpu`          | Renders with WebGPU where the browser supports it, WebGL otherwise                                                                                    |
-| `monitor=0`                | Disables the monitoring overlay and its counters                                                                                                      |
+| Parameter                  | Effect                                                                                                                                                                                                                           |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `elevation=0`              | Flat grids, no DEM requests                                                                                                                                                                                                      |
+| `scale=2`                  | Initial altitude scale; the panel slider changes it live                                                                                                                                                                         |
+| `solid=1`                  | Shaded rendering with a sun light instead of the wireframe                                                                                                                                                                       |
+| `radius=250`               | Initial camera distance to the summit in metres                                                                                                                                                                                  |
+| `pitch=50`                 | Initial camera pitch in degrees                                                                                                                                                                                                  |
+| `junctions=coarse`         | Junction policy between levels of detail: `fine` (default), `coarse` or `none`                                                                                                                                                   |
+| `heights=finest`           | Height of edge vertices shared by several levels: DEM of the `coarsest` (default), `finest` or `average` level                                                                                                                   |
+| `balance=0`                | Disables the 2:1 quadtree balance, which keeps neighbouring tiles within one level of detail                                                                                                                                     |
+| `interpolation=bilinear`   | DEM levels generated below level 15: `cubic` (default), `bilinear`, `linear` or `nearest`                                                                                                                                        |
+| `engine=gpu`               | Terrain engine: `mesh` (default), one CPU mesh per tile, or `gpu`, predefined grids instanced on the GPU                                                                                                                         |
+| `junctionBudget=4`         | Main-thread milliseconds per frame for rebuilding the grids whose neighbours changed, 4 by default                                                                                                                               |
+| `hysteresis=0.2`           | Refined tiles coarsen only once their error drops below `1 - hysteresis` times the threshold                                                                                                                                     |
+| `coarsenDelay=20`          | Frames a refined tile waits before coarsening                                                                                                                                                                                    |
+| `imagery=none`             | Imagery draped on shaded grids: `debug` (default), `none`, or the name of a local module (see [Imagery](#imagery))                                                                                                               |
+| `kmax=4`                   | Deepest drape, in levels below the terrain tile                                                                                                                                                                                  |
+| `subtrees=13/4252/2920/13` | Terrain subtrees with their own levels, `lod/x/y/maxLOD` separated by commas: from each root tile down, the grid stops at `maxLOD`, or refines deeper                                                                            |
+| `body=moon`                | A whole synthetic Moon on the cube index, poles included, with the GPU engine, without network; `lat` and `lon` set the target. The relief depends on the direction alone, so a crack between tiles would be a bug of the tiling |
+| `renderer=webgpu`          | Renders with WebGPU where the browser supports it, WebGL otherwise                                                                                                                                                               |
+| `monitor=0`                | Disables the monitoring overlay and its counters                                                                                                                                                                                 |
 
 The Mapzen attribution is displayed in the bottom-right corner.
 

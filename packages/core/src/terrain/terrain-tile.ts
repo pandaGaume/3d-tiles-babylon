@@ -31,7 +31,9 @@ export function tileIdentity<THandle>(context: TerrainActivation<THandle>): ITil
             throw new Error(`Tile ${context.tile.id} has no valid ${name} metadata.`);
         return value;
     };
+    const face = properties?.face;
     return {
+        ...(typeof face === "number" ? { face } : {}),
         lod: readCoordinate("lod"),
         x: readCoordinate("x"),
         y: readCoordinate("y"),

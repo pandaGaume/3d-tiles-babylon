@@ -2,6 +2,7 @@ import type { Observer } from "@babylonjs/core/Misc/observable.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import type { ITileAddress } from "@spacexr/3d-tiles-runtime";
 import type { DemPyramid } from "@spacexr/dem";
+import { tileAddressKey as key } from "@spacexr/tiles";
 
 import { TextureArrayPool } from "../../raster/texture-array-pool";
 
@@ -9,10 +10,6 @@ interface IElevationPage {
     address: ITileAddress;
     layer: number;
     users: number;
-}
-
-function key(address: ITileAddress): string {
-    return `${address.lod}/${address.x}/${address.y}`;
 }
 
 /**

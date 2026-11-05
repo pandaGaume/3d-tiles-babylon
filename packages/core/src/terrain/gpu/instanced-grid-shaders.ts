@@ -3,11 +3,12 @@
  * instance attributes size and place it:
  *
  * - `instPlace`: tile centre minus camera position, computed in double precision on the CPU, and the shape layer;
- * - `instRotation`: cosine and sine of the centre longitude, longitude span of the tile, and the bits of the edges
- *   whose neighbours are finer, N 1, E 2, S 4, W 8;
+ * - `instRotation`: cosine and sine of the centre longitude and longitude span of the tile, or with radial heights the
+ *   tile centre on the body, and the bits of the edges whose neighbours are finer, N 1, E 2, S 4, W 8;
  * - `instImagery`: area of the tile in its imagery page, `west, north, size`, and the page layer, `-1` for none;
  * - `instElevation`, `instEdge*`, `instCorner*`: area of the tile in a DEM tile and the layer of its page, `-1` for
- *   none, for the interior, each edge and each corner.
+ *   none, for the interior, each edge and each corner. The fraction of the layer holds the quarter turns of a DEM tile
+ *   on another cube face.
  *
  * Vertices are addressed on the half-cell lattice, `2 * cells` steps per side: grid vertices at even steps, edge
  * midpoints at odd steps along their edge. `position` holds their `u, v`.
@@ -66,10 +67,15 @@ vec4 elevationAt(ivec2 h) {
 float heightIn(vec4 reference, vec2 uv) {
     if (reference.w < 0.0) return 0.0;
     float size = float(textureSize(elevations, 0).x);
-    vec2 texel = (reference.xy + uv * reference.z) * (size - 1.0);
+    int turns = int(fract(reference.w) * 4.0 + 0.5);
+    vec2 turned = uv;
+    if (turns == 1) turned = vec2(1.0 - uv.y, uv.x);
+    else if (turns == 2) turned = vec2(1.0 - uv.x, 1.0 - uv.y);
+    else if (turns == 3) turned = vec2(uv.y, 1.0 - uv.x);
+    vec2 texel = (reference.xy + turned * reference.z) * (size - 1.0);
     ivec2 base = clamp(ivec2(floor(texel)), ivec2(0), ivec2(int(size) - 2));
     vec2 f = clamp(texel - vec2(base), 0.0, 1.0);
-    int layer = int(reference.w + 0.5);
+    int layer = int(floor(reference.w));
     float h00 = texelFetch(elevations, ivec3(base, layer), 0).r;
     float h10 = texelFetch(elevations, ivec3(base + ivec2(1, 0), layer), 0).r;
     float h01 = texelFetch(elevations, ivec3(base + ivec2(0, 1), layer), 0).r;
@@ -81,8 +87,12 @@ float heightIn(vec4 reference, vec2 uv) {
 vec3 sampledPosition(ivec2 h) {
     vec4 shape = texelFetch(shapes, ivec3(h, int(instPlace.w + 0.5)), 0);
     vec2 uv = vec2(h) / float(steps());
+#ifdef RADIAL_HEIGHTS
+    vec3 up = normalize(instRotation.xyz + shape.xyz);
+#else
     float longitude = (uv.x - 0.5) * instRotation.z;
     vec3 up = vec3(cos(shape.w) * cos(longitude), cos(shape.w) * sin(longitude), sin(shape.w));
+#endif
     return shape.xyz + up * heightIn(elevationAt(h), uv);
 }
 
@@ -103,9 +113,21 @@ vec3 positionAt(ivec2 h) {
     return sampledPosition(h);
 }
 
+#ifdef RADIAL_HEIGHTS
+// Position of a lattice point on the reference surface, relative to the tile centre.
+vec3 shapePosition(ivec2 h) {
+    int last = steps();
+    return texelFetch(shapes, ivec3(clamp(h, ivec2(0), ivec2(last)), int(instPlace.w + 0.5)), 0).xyz;
+}
+#endif
+
 // Rotation about the polar axis by the longitude of the tile centre.
 vec3 rotate(vec3 p) {
+#ifdef RADIAL_HEIGHTS
+    return p;
+#else
     return vec3(instRotation.x * p.x - instRotation.y * p.y, instRotation.y * p.x + instRotation.x * p.y, p.z);
+#endif
 }
 
 void main(void) {
@@ -116,6 +138,13 @@ void main(void) {
     vec3 eastward = positionAt(h + ivec2(2, 0)) - positionAt(h - ivec2(2, 0));
     vec3 northward = positionAt(h - ivec2(0, 2)) - positionAt(h + ivec2(0, 2));
     vec3 normal = normalize(cross(eastward, northward));
+#ifdef RADIAL_HEIGHTS
+    // On a tile edge the differences are one-sided, which tilts the normal by half a cell of curvature: visible on the
+    // coarse tiles of a whole body. Remove the tilt of the undisplaced surface, known exactly from the ray.
+    vec3 flatEast = shapePosition(h + ivec2(2, 0)) - shapePosition(h - ivec2(2, 0));
+    vec3 flatNorth = shapePosition(h - ivec2(0, 2)) - shapePosition(h + ivec2(0, 2));
+    normal = normalize(normal + normalize(instRotation.xyz + shapePosition(h)) - normalize(cross(flatEast, flatNorth)));
+#endif
 
     vNormal = rotate(normal);
     vImagery = vec3(instImagery.xy + position.xy * instImagery.z, instImagery.w);
