@@ -27,3 +27,4 @@ export * from "./terrain/mesh/geodesic-grid-pipeline";
 export * from "./terrain/mesh/mesh-terrain-engine";
 export * from "./terrain/terrain-engine";
 export * from "./terrain/terrain-tile";
+export * from "./terrain/terrain-tiling";

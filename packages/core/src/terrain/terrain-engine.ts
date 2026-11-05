@@ -6,6 +6,7 @@ import type { IEcefSpatialState, ITileActivationAdapter, ITilePresentationAdapte
 
 import type { EdgeHeightPolicy, IGridElevationOptions } from "./mesh/geodesic-grid-pipeline";
 import type { JunctionPolicy } from "./displayed-tiles";
+import type { ITerrainTiling } from "./terrain-tiling";
 
 /**
  * What every terrain engine receives. The terrain runtime, the DEM pyramid,
@@ -24,6 +25,8 @@ export interface ITerrainEngineInputs {
     imageryPages?: BabylonRasterPages;
     junctions: JunctionPolicy;
     edgeHeights: EdgeHeightPolicy;
+    /** How tiles lie on the body. Defaults to Web Mercator on WGS84. The GPU engine renders every tiling, the mesh engine Web Mercator. */
+    tiling?: ITerrainTiling;
 }
 
 /**

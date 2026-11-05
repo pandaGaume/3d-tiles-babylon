@@ -12,7 +12,9 @@ import {
     GpuTerrainEngine,
     MeshTerrainEngine,
     TILE_METRICS,
+    createCubeGridSource,
     createGeodesicGridSource,
+    cubeTiling,
     createGeospatialCamera,
     metadataTileAddress,
     type IGridElevationOptions,
@@ -32,7 +34,12 @@ import {
     type IEcefSpatialState,
     type IRuntimeAdapter,
 } from "@spacexr/3d-tiles-runtime";
-import { GeodeticSystem } from "@spacexr/geodesy";
+import { Ellipsoid, GeodeticSystem } from "@spacexr/geodesy";
+import {
+    CUBE_TILE_TOPOLOGY,
+    CubeTileSurface,
+    ReferenceSurface,
+} from "@spacexr/tiles";
 import {
     ChildHeightRanges,
     DemPyramid,
@@ -44,6 +51,7 @@ import {
 
 import DemDecoderWorker from "./dem-decoder.worker?worker";
 import { debugImageryTile } from "./debug-imagery";
+import { SYNTHETIC_MOON_RADIUS, loadSyntheticMoonTile } from "./synthetic-moon";
 import { loadLocalImagery } from "./local-imagery";
 import { clearMonitorPanel, renderMonitorPanel } from "./monitor-panel";
 
@@ -77,7 +85,17 @@ async function run(): Promise<void> {
     );
     const scene = createGeospatialScene(engine);
 
-    const geodeticSystem = GeodeticSystem.WGS84;
+    // `body=moon` shows a whole synthetic Moon on the cube index, poles included, with the GPU engine.
+    const moon = parameters.get("body") === "moon";
+    const geodeticSystem = moon
+        ? new GeodeticSystem(Ellipsoid.sphere("Moon", SYNTHETIC_MOON_RADIUS))
+        : GeodeticSystem.WGS84;
+    const moonSurface = moon
+        ? new CubeTileSurface(ReferenceSurface.sphere(SYNTHETIC_MOON_RADIUS))
+        : undefined;
+    // Deepest terrain tile of the Moon, and deepest level its synthetic DEM computes before interpolating.
+    const moonMaxLOD = 14;
+    const moonDemMaxLOD = 10;
     const monitoringEnabled = parameters.get("monitor") !== "0";
     const solidRendering = parameters.get("solid") === "1";
     const elevationEnabled = parameters.get("elevation") !== "0";
@@ -129,7 +147,8 @@ async function run(): Promise<void> {
     if (!Number.isFinite(initialScale) || initialScale < 0)
         throw new RangeError("The scale parameter must be non-negative.");
     let verticalScale = initialScale;
-    const dem = elevationEnabled ? createMapzenTerrariumSource() : undefined;
+    const dem =
+        elevationEnabled && !moon ? createMapzenTerrariumSource() : undefined;
     const childHeightRanges = new ChildHeightRanges();
     // Terrain subtrees with their own levels, "lod/x/y/maxLOD" separated by commas, for example "13/4252/2920/13".
     const subtrees = (parameters.get("subtrees") ?? "")
@@ -144,12 +163,15 @@ async function run(): Promise<void> {
             return { root: { lod: lod!, x: x!, y: y! }, maxLOD: maxLOD! };
         });
     // Tiles start at 0/0. Each DEM reports the tile range and prepares the ranges of its four children.
-    const source = createGeodesicGridSource(
-        dem
+    const preparedHeights =
+        dem || (moon && elevationEnabled)
             ? { ranges: childHeightRanges, verticalScale: () => verticalScale }
-            : undefined,
-        { subtrees },
-    );
+            : undefined;
+    const source = moonSurface
+        ? createCubeGridSource(moonSurface, preparedHeights, {
+              maxLOD: moonMaxLOD,
+          })
+        : createGeodesicGridSource(preparedHeights, { subtrees });
     if (dem)
         requiredElement("attribution", HTMLElement).textContent =
             dem.source.attribution ?? "";
@@ -160,25 +182,32 @@ async function run(): Promise<void> {
         longitude: 6.865175,
         height: 4808,
     };
+    const target = moon
+        ? {
+              latitude: Number(parameters.get("lat") ?? "-85"),
+              longitude: Number(parameters.get("lon") ?? "20"),
+              height: 0,
+          }
+        : montBlanc;
     const camera = createGeospatialCamera(scene, {
         name: "geographic-camera",
         geodeticSystem,
         target: {
-            latitudeDegrees: montBlanc.latitude,
-            longitudeDegrees: montBlanc.longitude,
-            heightMeters: dem ? montBlanc.height * verticalScale : 0,
+            latitudeDegrees: target.latitude,
+            longitudeDegrees: target.longitude,
+            heightMeters: dem ? target.height * verticalScale : 0,
         },
-        radius: Number(parameters.get("radius") ?? "25000"),
+        radius: Number(parameters.get("radius") ?? (moon ? "400000" : "25000")),
         pitchRadians: (Number(parameters.get("pitch") ?? "60") * Math.PI) / 180,
         radiusMin: 500,
     });
 
     if (solidRendering) {
-        // Sun from the north-west, 45 degrees above the Mont Blanc horizon.
+        // Sun from the north-west, 45 degrees above the horizon of the target.
         const { east, north, up } =
             geodeticSystem.createLocalTangentPlaneDegrees(
-                montBlanc.latitude,
-                montBlanc.longitude,
+                target.latitude,
+                target.longitude,
             ).basis;
         const toSun = new Vector3(
             up.x + (north.x - east.x) * Math.SQRT1_2,
@@ -202,7 +231,10 @@ async function run(): Promise<void> {
         : imagery === "debug"
           ? {
                 load: (address: ITileAddress) =>
-                    Promise.resolve(debugImageryTile(address)),
+                    // Cube tiles hold their shared edges: one more texel per side.
+                    Promise.resolve(
+                        debugImageryTile(address, moon ? 257 : 256),
+                    ),
                 maxLOD: 20,
                 attribution: "",
             }
@@ -216,7 +248,7 @@ async function run(): Promise<void> {
         ? new BabylonRasterPages(scene, {
               load: imagerySource.load,
               maxLOD: imageryMetrics.maxLOD,
-              wrapX: true,
+              ...(moon ? { prestitched: true } : { wrapX: true }),
               tileSize: imageryMetrics.tileSize,
           })
         : undefined;
@@ -241,15 +273,15 @@ async function run(): Promise<void> {
         never
     > {
         // Imagery tiles share the height ranges prepared by the terrain DEM, for culling and distances.
-        const imagerySource = createGeodesicGridSource(
-            dem
-                ? {
-                      ranges: childHeightRanges,
-                      verticalScale: () => verticalScale,
-                  }
-                : undefined,
-            { metrics: imageryMetrics, id: "imagery" },
-        );
+        const imagerySource = moonSurface
+            ? createCubeGridSource(moonSurface, preparedHeights, {
+                  maxLOD: imageryMetrics.maxLOD,
+                  id: "imagery",
+              })
+            : createGeodesicGridSource(preparedHeights, {
+                  metrics: imageryMetrics,
+                  id: "imagery",
+              });
         const imageryAdapter = new BabylonRasterTileAdapter<IEcefSpatialState>(
             pages,
             {
@@ -279,46 +311,61 @@ async function run(): Promise<void> {
         });
     }
 
-    const elevation: IGridElevationOptions | undefined = dem
-        ? {
-              pyramid: new DemPyramid({
-                  load: webDemTileLoader(
-                      dem,
-                      // PNG and elevation decoding take about 60 ms per tile; workers keep it off the render loop.
-                      new WorkerDemDecoder(
-                          Array.from(
-                              {
-                                  length: Math.max(
-                                      1,
-                                      Math.min(
-                                          4,
-                                          (navigator.hardwareConcurrency || 2) -
-                                              1,
-                                      ),
-                                  ),
-                              },
-                              () =>
-                                  new DemDecoderWorker() as unknown as IDemWorkerEndpoint,
-                          ),
-                      ),
-                  ),
-                  maxLOD: dem.source.metrics.maxLOD,
-                  // Room for the DEM tiles retained by the displayed cut, and for the tiles loading around it.
-                  cacheEntries: 512,
-                  // Levels below the DEM are generated down to the deepest grid level.
-                  generation: {
-                      maxLOD: TILE_METRICS.maxLOD,
-                      interpolation: demInterpolation,
-                  },
-                  // The grid covers every longitude.
-                  wrapX: true,
-                  childHeightRanges,
-              }),
-              verticalScale,
-          }
-        : undefined;
+    const elevation: IGridElevationOptions | undefined = moon
+        ? elevationEnabled
+            ? {
+                  pyramid: new DemPyramid({
+                      prestitched: true,
+                      load: loadSyntheticMoonTile,
+                      maxLOD: moonDemMaxLOD,
+                      cacheEntries: 512,
+                      generation: { maxLOD: moonMaxLOD },
+                      childHeightRanges,
+                  }),
+                  verticalScale,
+              }
+            : undefined
+        : dem
+          ? {
+                pyramid: new DemPyramid({
+                    load: webDemTileLoader(
+                        dem,
+                        // PNG and elevation decoding take about 60 ms per tile; workers keep it off the render loop.
+                        new WorkerDemDecoder(
+                            Array.from(
+                                {
+                                    length: Math.max(
+                                        1,
+                                        Math.min(
+                                            4,
+                                            (navigator.hardwareConcurrency ||
+                                                2) - 1,
+                                        ),
+                                    ),
+                                },
+                                () =>
+                                    new DemDecoderWorker() as unknown as IDemWorkerEndpoint,
+                            ),
+                        ),
+                    ),
+                    maxLOD: dem.source.metrics.maxLOD,
+                    // Room for the DEM tiles retained by the displayed cut, and for the tiles loading around it.
+                    cacheEntries: 512,
+                    // Levels below the DEM are generated down to the deepest grid level.
+                    generation: {
+                        maxLOD: TILE_METRICS.maxLOD,
+                        interpolation: demInterpolation,
+                    },
+                    // The grid covers every longitude.
+                    wrapX: true,
+                    childHeightRanges,
+                }),
+                verticalScale,
+            }
+          : undefined;
     // The engine turning terrain tiles into pixels; the runtimes, the DEM and the imagery pages stay shared.
-    const engineName = parameters.get("engine") ?? "mesh";
+    // The mesh engine renders Web Mercator only.
+    const engineName = moon ? "gpu" : (parameters.get("engine") ?? "mesh");
     if (engineName !== "mesh" && engineName !== "gpu")
         throw new RangeError("The engine parameter must be mesh or gpu.");
     const terrainInputs: ITerrainEngineInputs = {
@@ -327,6 +374,7 @@ async function run(): Promise<void> {
         wireframe: !solidRendering,
         junctions,
         edgeHeights,
+        ...(moonSurface ? { tiling: cubeTiling(moonSurface) } : {}),
         ...(elevation ? { elevation } : {}),
         ...(imageryPages ? { imageryPages } : {}),
     };
@@ -339,7 +387,7 @@ async function run(): Promise<void> {
               });
     verticalScaleInput.value = String(verticalScale);
     verticalScaleValue.value = `x${verticalScale}`;
-    verticalScaleInput.disabled = !dem;
+    verticalScaleInput.disabled = !elevation;
     verticalScaleInput.addEventListener("input", () => {
         verticalScale = Number(verticalScaleInput.value);
         verticalScaleValue.value = `x${verticalScale}`;
@@ -370,7 +418,11 @@ async function run(): Promise<void> {
         instrumentation: { enabled: monitoringEnabled },
         // Neighbouring tiles stay within one level, so that every edge junction connects.
         quadtreeBalance:
-            parameters.get("balance") === "0" ? false : { wrapX: true },
+            parameters.get("balance") === "0"
+                ? false
+                : moon
+                  ? { topology: CUBE_TILE_TOPOLOGY }
+                  : { wrapX: true },
         // Terrain tiles of the view and around it; their DEM tiles are cached by the DEM pyramid.
         cache: { maxContentEntries: 1024 },
     });
@@ -411,7 +463,10 @@ async function run(): Promise<void> {
     status.textContent = "Loading the implicit quadtree...";
     await Promise.all([driver.start(), imageryDriver?.start()]);
     monitor.setStartupMilliseconds(performance.now() - startupStartedAt);
-    status.textContent = `Global WebMercator coverage, ${source.tileset.root.children?.length ?? 0} roots, LOD ${source.metrics.minLOD}..${source.metrics.maxLOD} | ${renderer === "webgpu" ? "WebGPU" : "WebGL"}`;
+    const coverage = moon
+        ? `Synthetic Moon on the cube index, 6 faces, LOD 0..${moonMaxLOD}`
+        : `Global WebMercator coverage, ${source.tileset.root.children?.length ?? 0} roots, LOD ${TILE_METRICS.minLOD}..${TILE_METRICS.maxLOD}`;
+    status.textContent = `${coverage} | ${renderer === "webgpu" ? "WebGPU" : "WebGL"}`;
 
     // Objects of the example, for probes run from the browser console.
     (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = {

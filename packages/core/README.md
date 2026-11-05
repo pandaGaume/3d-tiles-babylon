@@ -18,25 +18,25 @@ import "@babylonjs/loaders/glTF/2.0/index.js";
 
 ## Modules
 
-| Export                                                | Role                                                                                                     |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `createGeospatialEngine`, `createGeospatialScene`     | WebGL engine with large world rendering; right-handed scene without pointer-move picking                 |
-| `createGeospatialWebGPUEngine`, `createGeospatialRendererEngine` | WebGPU engine with large world rendering and the adapter limits; WebGPU or WebGL by browser support |
-| `createGeospatialCamera`, `useEllipsoidUpVector`      | `GeospatialCamera` orbiting a geodetic target, navigating along the ellipsoid surface normal             |
-| `createEcefCameraFrame`, `BabylonCameraChangeTracker` | Runtime camera frames and `CameraChangeFlags` from a Babylon camera                                      |
-| `BabylonRuntimeDriver`                                | Starts the runtime and runs a frame after rendering, only when the camera moved or loads settled         |
-| `BabylonGltfTileAdapter`                              | Activation and presentation ports for `.glb`, `.gltf` and external tilesets                              |
-| `detectTileContentFormat`                             | Recognizes `glb`, `gltf`, `tileset`, `b3dm`, `i3dm`, `pnts` and `cmpt` payloads from their bytes         |
-| `createBabylonTileMatrix`                             | glTF Y-up to 3D Tiles Z-up, then the tile local-to-ECEF transform                                        |
-| `CopyrightAttributions`, `extractGltfCopyrights`      | Ordered `asset.copyright` sources of presented content, as data providers require                        |
-| `BabylonRuntimeMonitor`, `formatBytes`                | Throttled snapshots joining runtime statistics with Babylon frame, draw call, GPU time and heap counters |
-| `TextureArrayPool`                                    | RGBA8 pages or RGBA32F tables in one WebGL 2 texture array, written layer by layer and grown on the GPU |
-| `BabylonRasterPages`, `BabylonRasterTileAdapter`      | Stitched imagery pages loaded into a pool, and the ports of an imagery runtime that publishes its cut    |
-| `MeshRasterDrape`, `RasterDrapeMaterialPlugin`        | `4^k` imagery pages per terrain mesh, `k` following the imagery cut, read through a per-mesh cell table  |
-| `GpuTerrainEngine`                                    | Terrain engine instancing predefined grids, sized and placed per instance, heights read on the GPU        |
-| `ITerrainEngine`, `MeshTerrainEngine`                 | Interchangeable terrain engines; the mesh engine builds one CPU mesh per tile, draped with imagery pages |
-| `createGeodesicGridSource`, `TILE_METRICS`            | Implicit Web Mercator quadtree of terrain tiles, with height ranges prepared by a DEM pyramid            |
-| `DisplayedTiles`                                      | Last known cut of a quadtree: levels across each tile edge, kept through tiles leaving the view          |
+| Export                                                           | Role                                                                                                     |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `createGeospatialEngine`, `createGeospatialScene`                | WebGL engine with large world rendering; right-handed scene without pointer-move picking                 |
+| `createGeospatialWebGPUEngine`, `createGeospatialRendererEngine` | WebGPU engine with large world rendering and the adapter limits; WebGPU or WebGL by browser support      |
+| `createGeospatialCamera`, `useEllipsoidUpVector`                 | `GeospatialCamera` orbiting a geodetic target, navigating along the ellipsoid surface normal             |
+| `createEcefCameraFrame`, `BabylonCameraChangeTracker`            | Runtime camera frames and `CameraChangeFlags` from a Babylon camera                                      |
+| `BabylonRuntimeDriver`                                           | Starts the runtime and runs a frame after rendering, only when the camera moved or loads settled         |
+| `BabylonGltfTileAdapter`                                         | Activation and presentation ports for `.glb`, `.gltf` and external tilesets                              |
+| `detectTileContentFormat`                                        | Recognizes `glb`, `gltf`, `tileset`, `b3dm`, `i3dm`, `pnts` and `cmpt` payloads from their bytes         |
+| `createBabylonTileMatrix`                                        | glTF Y-up to 3D Tiles Z-up, then the tile local-to-ECEF transform                                        |
+| `CopyrightAttributions`, `extractGltfCopyrights`                 | Ordered `asset.copyright` sources of presented content, as data providers require                        |
+| `BabylonRuntimeMonitor`, `formatBytes`                           | Throttled snapshots joining runtime statistics with Babylon frame, draw call, GPU time and heap counters |
+| `TextureArrayPool`                                               | RGBA8 pages or RGBA32F tables in one WebGL 2 texture array, written layer by layer and grown on the GPU  |
+| `BabylonRasterPages`, `BabylonRasterTileAdapter`                 | Stitched imagery pages loaded into a pool, and the ports of an imagery runtime that publishes its cut    |
+| `MeshRasterDrape`, `RasterDrapeMaterialPlugin`                   | `4^k` imagery pages per terrain mesh, `k` following the imagery cut, read through a per-mesh cell table  |
+| `GpuTerrainEngine`                                               | Terrain engine instancing predefined grids, sized and placed per instance, heights read on the GPU       |
+| `ITerrainEngine`, `MeshTerrainEngine`                            | Interchangeable terrain engines; the mesh engine builds one CPU mesh per tile, draped with imagery pages |
+| `createGeodesicGridSource`, `TILE_METRICS`                       | Implicit Web Mercator quadtree of terrain tiles, with height ranges prepared by a DEM pyramid            |
+| `DisplayedTiles`                                                 | Last known cut of a quadtree: levels across each tile edge, kept through tiles leaving the view          |
 
 ## glTF content
 
@@ -108,6 +108,22 @@ engine.runRenderLoop(() => {
 ```
 
 GPU frame time requires GPU timer queries. The monitor registers the time query extensions of WebGL and WebGPU. On WebGPU, timestamp queries are a device feature: `createGeospatialWebGPUEngine` enables every feature of the adapter, timestamp queries included; an engine created otherwise needs `enableAllFeatures` or the `timestamp-query` feature in its device descriptor.
+
+## Whole bodies
+
+`GpuTerrainEngine` renders any tiling. `ITerrainTiling` tells it where tiles lie and how they connect: `webMercatorTiling` by default, `cubeTiling` for a whole body on the cube index, poles included. `createCubeGridSource` builds the implicit quadtrees of the six faces. On the cube, heights are radial and the DEM of a tile on another face is read turned. `MeshTerrainEngine` renders Web Mercator only.
+
+```ts
+import { createCubeGridSource, cubeTiling, GpuTerrainEngine } from "@spacexr/3d-tiles-babylon";
+import { CUBE_TILE_TOPOLOGY, CubeTileSurface, ReferenceSurface } from "@spacexr/tiles";
+
+const surface = new CubeTileSurface(ReferenceSurface.sphere(1737400));
+const source = createCubeGridSource(surface, prepared, { maxLOD: 14 });
+const terrain = new GpuTerrainEngine({ ...inputs, tiling: cubeTiling(surface) });
+// Balance the runtime across faces: quadtreeBalance: { topology: CUBE_TILE_TOPOLOGY }
+```
+
+Elevation and imagery tiles hold their shared edges: pyramids take `prestitched: true`. See `docs/celestial-tiling.md` of 3d-tiles-core.
 
 ## License
 

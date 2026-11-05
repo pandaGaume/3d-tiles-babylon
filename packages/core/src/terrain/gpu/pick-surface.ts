@@ -4,14 +4,8 @@ import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import type { ITileAddress } from "@spacexr/3d-tiles-runtime";
 import type { DemPyramid } from "@spacexr/dem";
-import { GeodeticSystem } from "@spacexr/geodesy";
-import { createGridTopology } from "@spacexr/grid";
-
-import { tileCenterEcef, webMercatorLatitude } from "./grid-shapes";
-
-function key(address: ITileAddress): string {
-    return `${address.lod}/${address.x}/${address.y}`;
-}
+import { buildGridTileGeometry, createGridTopology, type IGridTopology } from "@spacexr/grid";
+import { WebMercatorTileSurface, tileAddressKey as key, type ITileSurface } from "@spacexr/tiles";
 
 /**
  * Surface the camera picks when the terrain is displaced on the GPU: one coarse grid per presented terrain tile,
@@ -23,8 +17,7 @@ function key(address: ITileAddress): string {
  */
 export class PickSurface {
     private readonly meshes = new Map<string, { address: ITileAddress; mesh: Mesh }>();
-    private readonly indices: Uint32Array;
-    private readonly coordinates: Float32Array;
+    private readonly topology: IGridTopology;
     private verticalScale: number;
 
     public constructor(
@@ -32,13 +25,11 @@ export class PickSurface {
         private readonly pyramid: DemPyramid | undefined,
         verticalScale: number,
         /** Cells per side of each pick grid. */
-        private readonly cells = 8,
-        private readonly system: GeodeticSystem = GeodeticSystem.WGS84,
+        cells = 8,
+        private readonly surface: ITileSurface = new WebMercatorTileSurface(),
     ) {
         this.verticalScale = verticalScale;
-        const topology = createGridTopology(cells);
-        this.indices = topology.indices;
-        this.coordinates = topology.coordinates;
+        this.topology = createGridTopology(cells);
     }
 
     /** Pick grids in the scene. */
@@ -84,24 +75,18 @@ export class PickSurface {
     }
 
     private build(address: ITileAddress): Mesh {
-        const center = tileCenterEcef(address, this.system);
         const count = 2 ** address.lod;
-        const positions = new Float32Array((this.coordinates.length / 2) * 3);
-        const point = { x: 0, y: 0, z: 0 };
-        for (let vertex = 0; vertex < this.coordinates.length / 2; vertex++) {
-            const x = (address.x + this.coordinates[vertex * 2]!) / count;
-            const y = (address.y + this.coordinates[vertex * 2 + 1]!) / count;
-            const sampled = this.pyramid?.heightAt(x, y, address.lod) ?? 0;
-            const height = Number.isNaN(sampled) ? 0 : sampled * this.verticalScale;
-            this.system.geodeticRadiansToEcef(webMercatorLatitude(y), x * 2 * Math.PI - Math.PI, height, point);
-            positions[vertex * 3] = point.x - center.x;
-            positions[vertex * 3 + 1] = point.y - center.y;
-            positions[vertex * 3 + 2] = point.z - center.z;
-        }
+        const { center, positions } = buildGridTileGeometry(this.topology, address, this.surface, {
+            heightInitializer: ({ u, v }) => {
+                const sampled =
+                    this.pyramid?.heightAt((address.x + u) / count, (address.y + v) / count, address.lod, address.face ?? 0) ?? 0;
+                return Number.isNaN(sampled) ? 0 : sampled * this.verticalScale;
+            },
+        });
         const mesh = new Mesh(`gpu-terrain-pick-${key(address)}`, this.scene);
         const data = new VertexData();
         data.positions = positions;
-        data.indices = this.indices;
+        data.indices = this.topology.indices;
         data.applyToMesh(mesh, false);
         mesh.position = new Vector3(center.x, center.y, center.z);
         // Matches no camera: picked, never drawn.

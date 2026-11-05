@@ -1,6 +1,9 @@
 import type { IMetadataEntity, IMetadataSchema, ITile, ITileset, NonEmptyArray } from "@spacexr/3d-tiles-core";
 import {
+    createCubeImplicitSource,
     createWebMapImplicitSource,
+    type ICubeImplicitSource,
+    type ICubeSubtree,
     type ImplicitTilesetDecorator,
     type IImplicitSubtreeGraft,
     type IImplicitTileAddressContext,
@@ -13,7 +16,7 @@ import {
 } from "@spacexr/3d-tiles-runtime";
 
 import type { ChildHeightRanges } from "@spacexr/dem";
-import { parentTileAddress } from "@spacexr/tiles";
+import { parentTileAddress, type CubeTileSurface } from "@spacexr/tiles";
 
 export const TILE_METRICS = new WebMercatorTileMetrics({
     minLOD: 3,
@@ -220,7 +223,56 @@ export function createGeodesicGridSource(prepared?: IPreparedHeights, options: I
     };
 }
 
-/** Address of an implicit grid tile, read from the `lod`, `x` and `y` metadata of the tile. */
+/** Options of {@link createCubeGridSource}. */
+export interface ICubeGridSourceOptions {
+    /** Deepest level of the grid. */
+    maxLOD: number;
+    /** Cells per tile side, for the geometric error. Defaults to 256. */
+    tileSize?: number;
+    /** Prefix of the data source identifiers. Defaults to `cube-grid`. */
+    id?: string;
+    /** Subtrees with their own levels, such as the polar caps of the Moon. */
+    subtrees?: readonly ICubeSubtree[];
+}
+
+/** Creates a whole body on the cube index, the quadtrees of its six faces decorated as implicit 3D Tiles. */
+export function createCubeGridSource(
+    surface: CubeTileSurface,
+    prepared: IPreparedHeights | undefined,
+    options: ICubeGridSourceOptions,
+): ICubeImplicitSource {
+    const id = options.id ?? "cube-grid";
+    const metadata = (address: ITileAddress): IMetadataEntity => ({
+        class: "GeodesicGridTile",
+        properties: { face: address.face ?? 0, lod: address.lod, x: address.x, y: address.y },
+    });
+    return createCubeImplicitSource({
+        id,
+        surface,
+        maxLOD: options.maxLOD,
+        urlTemplates: `${id}://tile/{face}/{z}/{x}/{y}`,
+        subtreeLevels: 4,
+        refine: "REPLACE",
+        tileMetadata: metadata,
+        contentMetadata: metadata,
+        ...(options.tileSize === undefined ? {} : { tileSize: options.tileSize }),
+        ...(options.subtrees ? { subtrees: options.subtrees } : {}),
+        // Ranges are prepared one level ahead; deeper tiles, such as imagery tiles, use their deepest prepared ancestor.
+        ...(prepared
+            ? {
+                  heightRange: (start: ITileAddress) => {
+                      for (let address: ITileAddress | undefined = start; address; address = parentTileAddress(address)) {
+                          const range = prepared.ranges.rangeFor(address);
+                          if (range) return [range[0] * prepared.verticalScale(), range[1] * prepared.verticalScale()] as const;
+                      }
+                      return undefined;
+                  },
+              }
+            : {}),
+    });
+}
+
+/** Address of an implicit grid tile, read from the `face`, `lod`, `x` and `y` metadata of the tile. */
 export function metadataTileAddress(tile: { id: string; source: ITile }): ITileAddress {
     const properties = tile.source.metadata?.properties;
     const coordinate = (name: "lod" | "x" | "y"): number => {
@@ -228,5 +280,6 @@ export function metadataTileAddress(tile: { id: string; source: ITile }): ITileA
         if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`Tile ${tile.id} has no valid ${name} metadata.`);
         return value;
     };
-    return { lod: coordinate("lod"), x: coordinate("x"), y: coordinate("y") };
+    const face = properties?.face;
+    return { ...(typeof face === "number" ? { face } : {}), lod: coordinate("lod"), x: coordinate("x"), y: coordinate("y") };
 }

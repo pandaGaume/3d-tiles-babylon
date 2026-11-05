@@ -45,7 +45,7 @@ export function debugImageryTile(
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillText(
-        `${address.lod}/${address.x}/${address.y}`,
+        `${address.face === undefined ? "" : `${address.face}: `}${address.lod}/${address.x}/${address.y}`,
         size / 2,
         size / 2,
     );
