@@ -20,6 +20,8 @@ export interface ITerrainTiling {
     topology: ITileTopology;
     /** Heights move vertices along the ray from the centre of the body instead of the normal of its ellipsoid. */
     radialHeights: boolean;
+    /** Radii `a`, `b`, `c` of the reference surface, for the normals of radial heights. */
+    referenceRadii?: readonly [number, number, number];
     /** Bounding box of a tile with a measured height range; without it, tiles keep a `region`. */
     boundingBox?: (address: ITileAddress, minimumHeight: number, maximumHeight: number) => number[];
 }
@@ -35,6 +37,7 @@ export function cubeTiling(surface: CubeTileSurface): ITerrainTiling {
         surface,
         topology: CUBE_TILE_TOPOLOGY,
         radialHeights: true,
+        referenceRadii: surface.reference.radii,
         boundingBox: (address, minimumHeight, maximumHeight) => cubeTileBoundingBox(address, surface, minimumHeight, maximumHeight),
     };
 }

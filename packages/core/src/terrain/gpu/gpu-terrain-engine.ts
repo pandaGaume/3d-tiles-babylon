@@ -144,6 +144,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
                     "skyColor",
                     "groundColor",
                     "imagerySize",
+                    "inverseRadiiSquared",
                 ],
                 samplers: ["shapes", "elevations", "imagery"],
                 defines: [
@@ -160,6 +161,8 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
         this.material.setColor3("baseColor", new Color3(0.47, 0.5, 0.45));
         this.material.setTexture("shapes", this.shapes.pool);
         this.material.setTexture("elevations", this.elevations.pool);
+        const radii = this.tiling.referenceRadii;
+        if (radii) this.material.setVector3("inverseRadiiSquared", new Vector3(1 / radii[0] ** 2, 1 / radii[1] ** 2, 1 / radii[2] ** 2));
         if (this.imageryPages) {
             this.material.setTexture("imagery", this.imageryPages.pool);
             this.material.setFloat("imagerySize", this.imageryPages.size);

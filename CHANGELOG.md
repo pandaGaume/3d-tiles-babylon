@@ -8,7 +8,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
-- Whole bodies on the cube index, poles included, with the GPU terrain engine: `ITerrainTiling` tells the engine where tiles lie and how they connect, with `webMercatorTiling` and `cubeTiling`. Shapes, picking, instance cuts and bounding volumes follow the tiling; heights are radial on the cube, and DEM tiles on another face are read turned. `createCubeGridSource` builds the six implicit quadtrees. The implicit grid example shows a synthetic Moon with `body=moon`.
+- Whole bodies on the cube index, poles included, with the GPU terrain engine: `ITerrainTiling` tells the engine where tiles lie and how they connect, with `webMercatorTiling` and `cubeTiling`. Shapes, picking, instance cuts and bounding volumes follow the tiling; heights are radial on the cube, DEM tiles on another face are read turned, and normals are computed at each pixel from the DEM. `createCubeGridSource` builds the six implicit quadtrees. The implicit grid example shows a synthetic Moon with `body=moon`.
 - `@spacexr/3d-tiles-babylon` package, extracted from the Babylon.js examples of 3d-tiles-core:
   - `createEcefCameraFrame`, `BabylonCameraChangeTracker` and `createBabylonTileMatrix` bridge Babylon cameras and glTF Y-up content to the runtime ECEF frames;
   - `createGeospatialEngine`, `createGeospatialScene`, `createGeospatialCamera` and `useEllipsoidUpVector` set up large world rendering and a `GeospatialCamera` navigating along the geodetic surface normal;

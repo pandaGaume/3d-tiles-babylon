@@ -15,7 +15,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { createCubeGridSource, cubeTiling, metadataTileAddress, webMercatorTiling } from "../src";
-import { INSTANCED_GRID_VERTEX } from "../src/terrain/gpu/instanced-grid-shaders";
+import { INSTANCED_GRID_FRAGMENT, INSTANCED_GRID_VERTEX } from "../src/terrain/gpu/instanced-grid-shaders";
 
 const SIZE = 17;
 const MOON = new CubeTileSurface(ReferenceSurface.sphere(1737400));
@@ -102,6 +102,38 @@ describe("cube terrain", () => {
         expect(heights?.sampler(0.5, 0.5)).toBeCloseTo(relief(cubeTileDirection(address, 0.5, 0.5)), 2);
         expect(pyramid.isResident(address)).toBe(true);
         expect(pyramid.isResident({ ...address, face: 4 })).toBe(false);
+    });
+});
+
+describe("shaders", () => {
+    it("declare no variable named with a word reserved by WGSL, which WebGL cannot detect", () => {
+        const reserved = [
+            "as",
+            "enable",
+            "final",
+            "from",
+            "let",
+            "loop",
+            "match",
+            "mod",
+            "module",
+            "override",
+            "ref",
+            "self",
+            "super",
+            "type",
+            "use",
+            "where",
+        ];
+        for (const source of [INSTANCED_GRID_VERTEX, INSTANCED_GRID_FRAGMENT]) {
+            const declared = [...source.matchAll(/\b(?:int|float|bool|vec[234]|ivec[234])\s+([A-Za-z_]\w*)/g)].map((match) => match[1]);
+            expect(declared.filter((name) => reserved.includes(name!))).toEqual([]);
+        }
+    });
+
+    it("only declares the fragment normal inputs with radial heights", () => {
+        expect(INSTANCED_GRID_FRAGMENT).toContain("heightGradient(vPage, vTile)");
+        expect(INSTANCED_GRID_FRAGMENT).toMatch(/#ifdef RADIAL_HEIGHTS[\s\S]*#else\s+vec3 normal = normalize\(vNormal\);/);
     });
 });
 
