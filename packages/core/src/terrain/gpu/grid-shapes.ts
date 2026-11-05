@@ -2,10 +2,9 @@ import type { Observer } from "@babylonjs/core/Misc/observable.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import type { ITileAddress } from "@spacexr/3d-tiles-runtime";
 import { GeodeticSystem } from "@spacexr/geodesy";
-import { buildGridTileShape, type IGridTileShape } from "@spacexr/grid";
-import { WebMercatorTileSurface, type ITileSurface } from "@spacexr/tiles";
 
 import { TextureArrayPool } from "../../raster/texture-array-pool";
+import type { ITerrainTiling } from "../terrain-tiling";
 
 /** Latitude in radians of a Web Mercator ordinate, `y` southward in `[0, 1]` over the whole pyramid. */
 export function webMercatorLatitude(y: number): number {
@@ -27,19 +26,6 @@ export function tileCenterEcef(address: ITileAddress, system: GeodeticSystem = G
     return system.geodeticRadiansToEcef(tileCenterLatitude(address), tileCenterLongitude(address), 0);
 }
 
-/** Texels of a shape: per vertex, its position relative to the tile centre and its latitude from the up vector. */
-function shapeTexels(shape: IGridTileShape): Float32Array {
-    const { positions, ups } = shape;
-    const data = new Float32Array((positions.length / 3) * 4);
-    for (let vertex = 0; vertex < positions.length / 3; vertex++) {
-        data[vertex * 4] = positions[vertex * 3]!;
-        data[vertex * 4 + 1] = positions[vertex * 3 + 1]!;
-        data[vertex * 4 + 2] = positions[vertex * 3 + 2]!;
-        data[vertex * 4 + 3] = Math.asin(ups[vertex * 3 + 2]!);
-    }
-    return data;
-}
-
 /**
  * Shape of every tile of one Web Mercator level and row: per vertex of a grid of `cells x cells` cells, the position on
  * the ellipsoid relative to the tile centre, in a frame rotated so that the centre longitude is 0, and the geodetic
@@ -49,7 +35,24 @@ function shapeTexels(shape: IGridTileShape): Float32Array {
  * computed in double precision and only hold distances within a tile, so 32-bit floats keep them precise.
  */
 export function gridShape(lod: number, row: number, cells: number, system: GeodeticSystem = GeodeticSystem.WGS84): Float32Array {
-    return shapeTexels(buildGridTileShape({ lod, x: 0, y: row }, new WebMercatorTileSurface(system), cells));
+    const side = cells + 1;
+    const data = new Float32Array(side * side * 4);
+    const count = 2 ** lod;
+    const span = (2 * Math.PI) / count;
+    const center = system.geodeticRadiansToEcef(tileCenterLatitude({ lod, y: row }), 0, 0);
+    const point = { x: 0, y: 0, z: 0 };
+    for (let j = 0; j < side; j++) {
+        const latitude = webMercatorLatitude((row + j / cells) / count);
+        for (let i = 0; i < side; i++) {
+            system.geodeticRadiansToEcef(latitude, (i / cells - 0.5) * span, 0, point);
+            const offset = (j * side + i) * 4;
+            data[offset] = point.x - center.x;
+            data[offset + 1] = point.y - center.y;
+            data[offset + 2] = point.z - center.z;
+            data[offset + 3] = latitude;
+        }
+    }
+    return data;
 }
 
 interface IShapeEntry {
@@ -67,7 +70,7 @@ export class GridShapes {
     public constructor(
         scene: Scene,
         public readonly cells: number,
-        private readonly surface: ITileSurface = new WebMercatorTileSurface(),
+        private readonly tiling: Pick<ITerrainTiling, "shapeKey" | "shapeTexels">,
     ) {
         this.pool = new TextureArrayPool(scene, { size: cells + 1, format: "rgba32f", initialLayers: 64 });
         // Float layers are not copied when a WebGL 2 pool grows: write every shape again.
@@ -88,7 +91,7 @@ export class GridShapes {
      * @returns Its layer, or `undefined` when the texture array is full.
      */
     public acquire(address: ITileAddress): number | undefined {
-        const shapeKey = this.surface.shape(address).key;
+        const shapeKey = this.tiling.shapeKey(address);
         const existing = this.entries.get(shapeKey);
         if (existing) {
             existing.users++;
@@ -104,7 +107,7 @@ export class GridShapes {
 
     /** Releases a shape acquired with {@link acquire}; its layer returns to the pool once unused. */
     public release(address: ITileAddress): void {
-        const shapeKey = this.surface.shape(address).key;
+        const shapeKey = this.tiling.shapeKey(address);
         const entry = this.entries.get(shapeKey);
         if (!entry || --entry.users > 0) return;
         this.entries.delete(shapeKey);
@@ -118,6 +121,6 @@ export class GridShapes {
     }
 
     private write(entry: IShapeEntry): void {
-        this.pool.write(entry.layer, shapeTexels(buildGridTileShape(entry.address, this.surface, this.cells)));
+        this.pool.write(entry.layer, this.tiling.shapeTexels(entry.address, this.cells));
     }
 }

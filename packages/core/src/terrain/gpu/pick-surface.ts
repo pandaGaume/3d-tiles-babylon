@@ -4,8 +4,10 @@ import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import type { ITileAddress } from "@spacexr/3d-tiles-runtime";
 import type { DemPyramid } from "@spacexr/dem";
-import { buildGridTileGeometry, createGridTopology, type IGridTopology } from "@spacexr/grid";
-import { WebMercatorTileSurface, tileAddressKey as key, type ITileSurface } from "@spacexr/tiles";
+import { createGridTopology, type IGridTopology } from "@spacexr/grid";
+import { tileAddressKey as key } from "@spacexr/tiles";
+
+import type { ITerrainTiling } from "../terrain-tiling";
 
 /**
  * Surface the camera picks when the terrain is displaced on the GPU: one coarse grid per presented terrain tile,
@@ -25,8 +27,8 @@ export class PickSurface {
         private readonly pyramid: DemPyramid | undefined,
         verticalScale: number,
         /** Cells per side of each pick grid. */
-        cells = 8,
-        private readonly surface: ITileSurface = new WebMercatorTileSurface(),
+        cells: number,
+        private readonly tiling: Pick<ITerrainTiling, "pickGeometry">,
     ) {
         this.verticalScale = verticalScale;
         this.topology = createGridTopology(cells);
@@ -75,13 +77,9 @@ export class PickSurface {
     }
 
     private build(address: ITileAddress): Mesh {
-        const count = 2 ** address.lod;
-        const { center, positions } = buildGridTileGeometry(this.topology, address, this.surface, {
-            heightInitializer: ({ u, v }) => {
-                const sampled =
-                    this.pyramid?.heightAt((address.x + u) / count, (address.y + v) / count, address.lod, address.face ?? 0) ?? 0;
-                return Number.isNaN(sampled) ? 0 : sampled * this.verticalScale;
-            },
+        const { center, positions } = this.tiling.pickGeometry(this.topology, address, (x, y, face) => {
+            const sampled = this.pyramid?.heightAt(x, y, address.lod, face) ?? 0;
+            return Number.isNaN(sampled) ? 0 : sampled * this.verticalScale;
         });
         const mesh = new Mesh(`gpu-terrain-pick-${key(address)}`, this.scene);
         const data = new VertexData();

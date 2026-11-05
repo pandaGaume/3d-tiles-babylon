@@ -77,15 +77,23 @@ vec4 elevationAt(ivec2 h) {
 float heightIn(vec4 reference, vec2 uv) {
     if (reference.w < 0.0) return 0.0;
     float size = float(textureSize(elevations, 0).x);
+#ifdef RADIAL_HEIGHTS
     int turns = int(fract(reference.w) * 4.0 + 0.5);
     vec2 turned = uv;
     if (turns == 1) turned = vec2(1.0 - uv.y, uv.x);
     else if (turns == 2) turned = vec2(1.0 - uv.x, 1.0 - uv.y);
     else if (turns == 3) turned = vec2(uv.y, 1.0 - uv.x);
     vec2 texel = (reference.xy + turned * reference.z) * (size - 1.0);
+#else
+    vec2 texel = (reference.xy + uv * reference.z) * (size - 1.0);
+#endif
     ivec2 base = clamp(ivec2(floor(texel)), ivec2(0), ivec2(int(size) - 2));
     vec2 f = clamp(texel - vec2(base), 0.0, 1.0);
+#ifdef RADIAL_HEIGHTS
     int layer = int(floor(reference.w));
+#else
+    int layer = int(reference.w + 0.5);
+#endif
     float h00 = texelFetch(elevations, ivec3(base, layer), 0).r;
     float h10 = texelFetch(elevations, ivec3(base + ivec2(1, 0), layer), 0).r;
     float h01 = texelFetch(elevations, ivec3(base + ivec2(0, 1), layer), 0).r;
