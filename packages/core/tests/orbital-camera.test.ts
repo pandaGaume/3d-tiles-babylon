@@ -1,5 +1,6 @@
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine.js";
 import { Scene } from "@babylonjs/core/scene.js";
+import { VerticalScale } from "@spacexr/3d-tiles-runtime";
 import { ReferenceSurface, planetocentricDirection } from "@spacexr/tiles";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -63,6 +64,20 @@ describe("OrbitalCamera", () => {
             radiusMin: 10,
         });
         expect(Math.hypot(low.position.x, low.position.y, low.position.z)).toBeCloseTo(1737400 + 3050, 3);
+    });
+
+    it("applies the vertical scale of the scene to the terrain, and follows its changes", () => {
+        const verticalScale = new VerticalScale(2);
+        const orbital = camera({ direction: planetocentricDirection(10, 20), heightAt: () => 1000, verticalScale });
+        expect(orbital.frame.centerHeight).toBe(2000);
+
+        verticalScale.set(5);
+        for (let frame = 0; frame < 200; frame++) scene!.onBeforeRenderObservable.notifyObservers(scene!);
+        expect(orbital.frame.centerHeight).toBeCloseTo(5000, 0);
+
+        orbital.dispose();
+        verticalScale.set(1);
+        expect(orbital.frame.centerHeight).toBeCloseTo(5000, 0);
     });
 
     it("ignores an unknown terrain height", () => {

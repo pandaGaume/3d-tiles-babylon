@@ -8,6 +8,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- `VerticalScale` can be shared by a scene: terrain engines accept it in `elevation.verticalScale`, besides a number, and `OrbitalCamera` and `BabylonGltfTileAdapter` read it. `BabylonGltfTileAdapter` moves objects with it, with its `vertical` option. The implicit grid example places glTF objects on the Moon with `objects=1`.
+- Web Mercator is the official terrain engine and the cube an alternative under test: `ITerrainTiling` holds what differs between them, so Web Mercator computes shapes, centres, pick grids and DEM areas as it did before the cube.
 - `OrbitalCamera` orbits a point of a body and can cross its poles: `OrbitFrame` holds the direction of the point and a tangent direction, carried together along great circles, with no north in its state. It follows the terrain with `heightAt` and stays above it. The Moon of the implicit grid example uses it.
 - Whole bodies on the cube index, poles included, with the GPU terrain engine: `ITerrainTiling` tells the engine where tiles lie and how they connect, with `webMercatorTiling` and `cubeTiling`. Shapes, picking, instance cuts and bounding volumes follow the tiling; heights are radial on the cube, DEM tiles on another face are read turned, and normals are computed at each pixel from the DEM. `createCubeGridSource` builds the six implicit quadtrees. The implicit grid example shows a synthetic Moon with `body=moon`.
 - `@spacexr/3d-tiles-babylon` package, extracted from the Babylon.js examples of 3d-tiles-core:

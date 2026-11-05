@@ -1,5 +1,6 @@
 import type { AssetContainer } from "@babylonjs/core/assetContainer.js";
 import { LoadAssetContainerAsync } from "@babylonjs/core/Loading/sceneLoader.js";
+import type { Matrix } from "@babylonjs/core/Maths/math.vector.js";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import { TilesetJsonCodec } from "@spacexr/3d-tiles-core";
@@ -13,6 +14,8 @@ import {
     type ITileDeactivationContext,
     type ITilePresentationAdapter,
     type ITilePresentationContext,
+    verticalDisplacement,
+    type IVerticalPlacement,
 } from "@spacexr/3d-tiles-runtime";
 
 import { createBabylonTileMatrix } from "../spatial/tile-matrix";
@@ -25,6 +28,8 @@ export interface IBabylonGltfTileHandle {
     readonly container: AssetContainer;
     /** Parent of the imported nodes, carrying the tile transform. */
     readonly root: TransformNode;
+    /** Spatial state of the tile the content was loaded for. */
+    readonly spatial: IEcefSpatialState;
     readonly copyrights: readonly string[];
     /** Contents currently presenting this handle. */
     readonly presentations: Set<string>;
@@ -43,6 +48,11 @@ export interface IBabylonGltfTileAdapterOptions {
     createRequestError?: (response: Response, uri: string) => Error | Promise<Error>;
     /** Receives the glTF `asset.copyright` sources of presented content. */
     attributions?: CopyrightAttributions;
+    /**
+     * Moves the content with the vertical scale of the scene. The spatial metric of the runtime takes the same placement,
+     * for the bounds, and the runtime the same scale.
+     */
+    vertical?: IVerticalPlacement;
 }
 
 const tilesetCodec = new TilesetJsonCodec();
@@ -69,6 +79,9 @@ export class BabylonGltfTileAdapter<TGlyphHandle = never>
     private readonly requestInit: RequestInit;
     private readonly createRequestError: (response: Response, uri: string) => Error | Promise<Error>;
     private readonly attributions: CopyrightAttributions | undefined;
+    private readonly vertical: IVerticalPlacement | undefined;
+    private readonly handles = new Set<IBabylonGltfTileHandle>();
+    private readonly stopVerticalScale: (() => void) | undefined;
 
     public constructor(
         private readonly scene: Scene,
@@ -81,6 +94,10 @@ export class BabylonGltfTileAdapter<TGlyphHandle = never>
         this.requestInit = { credentials: "omit", ...options.requestInit, headers };
         this.createRequestError = options.createRequestError ?? defaultRequestError;
         this.attributions = options.attributions;
+        this.vertical = options.vertical;
+        this.stopVerticalScale = options.vertical?.scale.subscribe(() => {
+            for (const handle of this.handles) handle.root.setPreTransformMatrix(this.tileMatrix(handle.spatial));
+        });
     }
 
     public async activate(context: ITileActivationContext<IEcefSpatialState, IBabylonGltfTileHandle, TGlyphHandle>): Promise<void> {
@@ -129,6 +146,11 @@ export class BabylonGltfTileAdapter<TGlyphHandle = never>
 
     public release(context: ITilePresentationContext<IEcefSpatialState, IBabylonGltfTileHandle, TGlyphHandle>): void {
         for (const { handle } of context.resources) this.disposeHandle(handle);
+    }
+
+    /** Stops following the vertical scale. The content is released by the runtime. */
+    public dispose(): void {
+        this.stopVerticalScale?.();
     }
 
     private async load(
@@ -189,19 +211,34 @@ export class BabylonGltfTileAdapter<TGlyphHandle = never>
     ): IBabylonGltfTileHandle {
         const importedRoots = [...container.rootNodes];
         const root = new TransformNode(`tile-root-${contentId}`, this.scene);
-        root.setPreTransformMatrix(createBabylonTileMatrix(spatial));
+        root.setPreTransformMatrix(this.tileMatrix(spatial));
         root.setEnabled(false);
         for (const node of importedRoots) node.parent = root;
         // The root belongs to the container, so that addAllToScene and dispose include it.
         container.transformNodes.push(root);
         container.populateRootNodes();
         this.scene.removeTransformNode(root);
-        return { container, root, copyrights, presentations: new Set<string>(), addedToScene: false, disposed: false };
+        const handle: IBabylonGltfTileHandle = {
+            container,
+            root,
+            spatial,
+            copyrights,
+            presentations: new Set<string>(),
+            addedToScene: false,
+            disposed: false,
+        };
+        this.handles.add(handle);
+        return handle;
+    }
+
+    private tileMatrix(spatial: IEcefSpatialState): Matrix {
+        return createBabylonTileMatrix(spatial, this.vertical && verticalDisplacement(spatial.verticalAnchor, this.vertical));
     }
 
     private disposeHandle(handle: IBabylonGltfTileHandle): void {
         if (handle.disposed) return;
         handle.disposed = true;
+        this.handles.delete(handle);
         for (const contentId of handle.presentations) this.attributions?.detach(contentId);
         handle.presentations.clear();
         handle.container.dispose();

@@ -5,6 +5,7 @@ import type { Scene } from "@babylonjs/core/scene.js";
 import type { ICartesian3 } from "@spacexr/tiles";
 
 import { OrbitFrame, type IOrbitFrameOptions } from "./orbit-frame";
+import type { VerticalScale } from "@spacexr/3d-tiles-runtime";
 
 /** Share of the gap to the terrain closed per frame by the height of the orbited point. */
 const TERRAIN_FOLLOW = 0.15;
@@ -19,6 +20,8 @@ export interface IOrbitalCameraOptions extends IOrbitFrameOptions {
     name?: string;
     /** Height of the terrain in a unit direction, in metres, or `NaN` where unknown. The camera follows it and stays above it. */
     heightAt?: (direction: Readonly<ICartesian3>) => number;
+    /** Vertical scale of the scene, applied to {@link heightAt}. */
+    verticalScale?: VerticalScale;
     /** Lowest altitude of the camera above the terrain, in metres. Defaults to 50 m. */
     altitudeMin?: number;
     /** Attaches pointer, wheel and keyboard controls. Defaults to true. */
@@ -36,6 +39,8 @@ export class OrbitalCamera extends Camera {
     public readonly frame: OrbitFrame;
     /** Height of the terrain in a direction; see {@link IOrbitalCameraOptions.heightAt}. */
     public heightAt: ((direction: Readonly<ICartesian3>) => number) | undefined;
+    private readonly verticalScale: VerticalScale | undefined;
+    private readonly stopVerticalScale: (() => void) | undefined;
     public readonly altitudeMin: number;
     private readonly viewMatrix = new Matrix();
     private readonly target = new Vector3();
@@ -51,6 +56,8 @@ export class OrbitalCamera extends Camera {
         super(options.name ?? "orbital-camera", Vector3.Zero(), scene);
         this.frame = new OrbitFrame(options);
         this.heightAt = options.heightAt;
+        this.verticalScale = options.verticalScale;
+        this.stopVerticalScale = options.verticalScale?.subscribe(() => this.poseChanged());
         this.altitudeMin = options.altitudeMin ?? 50;
         const terrain = this.terrainHeight(this.frame.direction);
         if (!Number.isNaN(terrain)) this.frame.centerHeight = terrain;
@@ -148,6 +155,7 @@ export class OrbitalCamera extends Camera {
     }
 
     public override dispose(doNotRecurse?: boolean, disposeMaterialAndTextures?: boolean): void {
+        this.stopVerticalScale?.();
         this.detachControl();
         this.getScene().onBeforeRenderObservable.remove(this.frameObserver);
         super.dispose(doNotRecurse, disposeMaterialAndTextures);
@@ -164,7 +172,7 @@ export class OrbitalCamera extends Camera {
     }
 
     private terrainHeight(direction: Readonly<ICartesian3>): number {
-        return this.heightAt ? this.heightAt(direction) : Number.NaN;
+        return this.heightAt ? this.heightAt(direction) * (this.verticalScale?.value ?? 1) : Number.NaN;
     }
 
     private metresPerPixel(): number {
