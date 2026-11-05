@@ -1,5 +1,7 @@
 export * from "./camera/camera-change-tracker";
 export * from "./camera/geospatial-camera";
+export * from "./camera/orbit-frame";
+export * from "./camera/orbital-camera";
 export * from "./draping/mesh/mesh-raster-drape";
 export * from "./draping/mesh/raster-drape-plugin";
 export * from "./gltf/attributions";

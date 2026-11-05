@@ -16,6 +16,7 @@ import {
     createGeodesicGridSource,
     cubeTiling,
     createGeospatialCamera,
+    OrbitalCamera,
     metadataTileAddress,
     type IGridElevationOptions,
     type ITerrainEngine,
@@ -39,6 +40,8 @@ import {
     CUBE_TILE_TOPOLOGY,
     CubeTileSurface,
     ReferenceSurface,
+    planetocentricDirection,
+    type ICartesian3,
 } from "@spacexr/tiles";
 import {
     ChildHeightRanges,
@@ -51,7 +54,11 @@ import {
 
 import DemDecoderWorker from "./dem-decoder.worker?worker";
 import { debugImageryTile } from "./debug-imagery";
-import { SYNTHETIC_MOON_RADIUS, loadSyntheticMoonTile } from "./synthetic-moon";
+import {
+    SYNTHETIC_MOON_RADIUS,
+    loadSyntheticMoonTile,
+    syntheticMoonHeight,
+} from "./synthetic-moon";
 import { loadLocalImagery } from "./local-imagery";
 import { clearMonitorPanel, renderMonitorPanel } from "./monitor-panel";
 
@@ -191,18 +198,44 @@ async function run(): Promise<void> {
               height: 0,
           }
         : montBlanc;
-    const camera = createGeospatialCamera(scene, {
-        name: "geographic-camera",
-        geodeticSystem,
-        target: {
-            latitudeDegrees: target.latitude,
-            longitudeDegrees: target.longitude,
-            heightMeters: dem ? target.height * verticalScale : 0,
-        },
-        radius: Number(parameters.get("radius") ?? (moon ? "400000" : "25000")),
-        pitchRadians: (Number(parameters.get("pitch") ?? "60") * Math.PI) / 180,
-        radiusMin: 500,
-    });
+    const pitchRadians =
+        (Number(parameters.get("pitch") ?? "60") * Math.PI) / 180;
+    const orbitRadius = Number(
+        parameters.get("radius") ?? (moon ? "400000" : "25000"),
+    );
+    // The Moon orbits with a camera that can cross its poles; `yaw` sets the heading in degrees.
+    const camera = moonSurface
+        ? new OrbitalCamera(scene, {
+              name: "orbital-camera",
+              surface: moonSurface.reference,
+              direction: planetocentricDirection(
+                  target.latitude,
+                  target.longitude,
+              ),
+              radius: orbitRadius,
+              pitchRadians,
+              headingRadians:
+                  (Number(parameters.get("yaw") ?? "0") * Math.PI) / 180,
+              radiusMin: 500,
+              ...(elevationEnabled
+                  ? {
+                        heightAt: (direction: Readonly<ICartesian3>) =>
+                            syntheticMoonHeight(direction) * verticalScale,
+                    }
+                  : {}),
+          })
+        : createGeospatialCamera(scene, {
+              name: "geographic-camera",
+              geodeticSystem,
+              target: {
+                  latitudeDegrees: target.latitude,
+                  longitudeDegrees: target.longitude,
+                  heightMeters: dem ? target.height * verticalScale : 0,
+              },
+              radius: orbitRadius,
+              pitchRadians,
+              radiusMin: 500,
+          });
 
     if (solidRendering) {
         // Sun from the north-west, 45 degrees above the horizon of the target.
@@ -394,6 +427,7 @@ async function run(): Promise<void> {
         verticalScale = Number(verticalScaleInput.value);
         verticalScaleValue.value = `x${verticalScale}`;
         terrain.setVerticalScale(verticalScale);
+        if (camera instanceof OrbitalCamera) camera.poseChanged();
     });
 
     const adapter: IRuntimeAdapter<
@@ -473,6 +507,7 @@ async function run(): Promise<void> {
     // Objects of the example, for probes run from the browser console.
     (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = {
         renderer,
+        camera,
         runtime,
         imageryRuntime,
         terrain,

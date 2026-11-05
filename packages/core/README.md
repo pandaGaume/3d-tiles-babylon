@@ -111,7 +111,7 @@ GPU frame time requires GPU timer queries. The monitor registers the time query 
 
 ## Whole bodies
 
-`GpuTerrainEngine` renders any tiling. `ITerrainTiling` tells it where tiles lie and how they connect: `webMercatorTiling` by default, `cubeTiling` for a whole body on the cube index, poles included. `createCubeGridSource` builds the implicit quadtrees of the six faces. On the cube, heights are radial, the DEM of a tile on another face is read turned, and normals are computed at each pixel from the DEM. Babylon's `GeospatialCamera` keeps its centre about 2.87 degrees away from the poles: it can look at a pole, not orbit it. `MeshTerrainEngine` renders Web Mercator only.
+`GpuTerrainEngine` renders any tiling. `ITerrainTiling` tells it where tiles lie and how they connect: `webMercatorTiling` by default, `cubeTiling` for a whole body on the cube index, poles included. `createCubeGridSource` builds the implicit quadtrees of the six faces. On the cube, heights are radial, the DEM of a tile on another face is read turned, and normals are computed at each pixel from the DEM. Babylon's `GeospatialCamera` keeps its centre about 2.87 degrees away from the poles and measures its yaw from the north. `OrbitalCamera` has no north in its state, so it can centre on a pole and cross it: drag to pan, drag with the right or middle button or with Ctrl to turn and tilt, use the wheel or a pinch to zoom, two fingers to turn, the arrow keys to pan, `+` and `-` to zoom, `Q` and `E` to turn, `Page Up` and `Page Down` to tilt. `MeshTerrainEngine` renders Web Mercator only.
 
 ```ts
 import { createCubeGridSource, cubeTiling, GpuTerrainEngine } from "@spacexr/3d-tiles-babylon";
