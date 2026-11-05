@@ -170,6 +170,8 @@ async function run(): Promise<void> {
     const source = moonSurface
         ? createCubeGridSource(moonSurface, preparedHeights, {
               maxLOD: moonMaxLOD,
+              // The error of a terrain tile follows the cells of its grid, not the samples of its DEM.
+              tileSize: 16,
           })
         : createGeodesicGridSource(preparedHeights, { subtrees });
     if (dem)
