@@ -111,14 +111,15 @@ GPU frame time requires GPU timer queries. The monitor registers the time query 
 
 ## Whole bodies
 
-`GpuTerrainEngine` renders any tiling. `ITerrainTiling` tells it where tiles lie and how they connect: `webMercatorTiling` by default, `cubeTiling` for a whole body on the cube index, poles included. `createCubeGridSource` builds the implicit quadtrees of the six faces. On the cube, heights are radial and the DEM of a tile on another face is read turned. `MeshTerrainEngine` renders Web Mercator only.
+`GpuTerrainEngine` renders any tiling. `ITerrainTiling` tells it where tiles lie and how they connect: `webMercatorTiling` by default, `cubeTiling` for a whole body on the cube index, poles included. `createCubeGridSource` builds the implicit quadtrees of the six faces. On the cube, heights are radial, the DEM of a tile on another face is read turned, and normals are computed at each pixel from the DEM. Babylon's `GeospatialCamera` keeps its centre about 2.87 degrees away from the poles and measures its yaw from the north. `OrbitalCamera` has no north in its state, so it can centre on a pole and cross it: drag to pan, drag with the right or middle button or with Ctrl to turn and tilt, use the wheel or a pinch to zoom, two fingers to turn, the arrow keys to pan, `+` and `-` to zoom, `Q` and `E` to turn, `Page Up` and `Page Down` to tilt. `MeshTerrainEngine` renders Web Mercator only.
 
 ```ts
 import { createCubeGridSource, cubeTiling, GpuTerrainEngine } from "@spacexr/3d-tiles-babylon";
 import { CUBE_TILE_TOPOLOGY, CubeTileSurface, ReferenceSurface } from "@spacexr/tiles";
 
 const surface = new CubeTileSurface(ReferenceSurface.sphere(1737400));
-const source = createCubeGridSource(surface, prepared, { maxLOD: 14 });
+// The geometric error of terrain tiles follows the cells of the grid.
+const source = createCubeGridSource(surface, prepared, { maxLOD: 14, tileSize: 16 });
 const terrain = new GpuTerrainEngine({ ...inputs, tiling: cubeTiling(surface) });
 // Balance the runtime across faces: quadtreeBalance: { topology: CUBE_TILE_TOPOLOGY }
 ```

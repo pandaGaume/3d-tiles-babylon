@@ -18,6 +18,7 @@ import {
     type ITilePresentationContext,
     type ITileAddress,
     type MetadataHandle,
+    VerticalScale,
 } from "@spacexr/3d-tiles-runtime";
 import { GeodeticSystem } from "@spacexr/geodesy";
 import { JunctionGridTopologyCache, type IGridTopology, SAME_EDGE_LODS, edgeLodsKey, type GridEdgeLods } from "@spacexr/grid";
@@ -58,8 +59,13 @@ export interface IBabylonGeodesicGridHandle {
 export interface IGridElevationOptions {
     /** DEM surface, which also records the ranges prepared for child tiles. */
     pyramid: DemPyramid;
-    /** Initial vertical scale applied to every height. Defaults to 1. */
-    verticalScale?: number;
+    /** Vertical scale applied to every height: its initial value, or the scale shared by the scene. Defaults to 1. */
+    verticalScale?: number | VerticalScale;
+}
+
+/** The vertical scale of an engine: the scale shared by the scene, or its own from an initial value. */
+export function sharedVerticalScale(value: number | VerticalScale | undefined): VerticalScale {
+    return value instanceof VerticalScale ? value : new VerticalScale(value ?? 1);
 }
 
 export interface IBabylonGeodesicGridPipelineOptions {
@@ -135,7 +141,8 @@ export class BabylonGeodesicGridPipeline
     private readonly wireframe: boolean;
     private readonly elevation: IGridElevationOptions | undefined;
     private readonly drape: MeshRasterDrape | undefined;
-    private verticalScale: number;
+    private readonly verticalScale: VerticalScale;
+    private readonly stopVerticalScale: () => void;
     private createdHandleCount = 0;
     private releasedHandleCount = 0;
 
@@ -150,7 +157,8 @@ export class BabylonGeodesicGridPipeline
         this.wireframe = options.wireframe ?? true;
         this.elevation = options.elevation;
         this.drape = options.wireframe === false ? options.drape : undefined;
-        this.verticalScale = options.elevation?.verticalScale ?? 1;
+        this.verticalScale = sharedVerticalScale(options.elevation?.verticalScale);
+        this.stopVerticalScale = this.verticalScale.subscribe((scale) => this.applyVerticalScale(scale));
         this.junctions = options.junctions ?? "fine";
         this.edgeHeights = options.edgeHeights ?? "coarsest";
         this.junctionBudgetMilliseconds = options.junctionBudgetMilliseconds ?? 4;
@@ -183,9 +191,9 @@ export class BabylonGeodesicGridPipeline
                     // The tile starts at 0/0; its DEM gives the measured height range.
                     ...(heights && !Number.isNaN(heights.range.minimum) && !Number.isNaN(heights.range.maximum)
                         ? {
-                              tileBoundingVolume: {
-                                  region: regionWithHeights(tileRegion(context), heights.range, this.verticalScale),
-                              },
+                              tileBoundingVolume: () => ({
+                                  region: regionWithHeights(tileRegion(context), heights.range, this.verticalScale.value),
+                              }),
                           }
                         : {}),
                 });
@@ -314,6 +322,7 @@ export class BabylonGeodesicGridPipeline
     }
 
     public dispose(): void {
+        this.stopVerticalScale();
         for (const handle of [...this.handles]) this.disposeHandle(handle);
         for (const material of this.materialsByLod.values()) material.dispose();
         this.materialsByLod.clear();
@@ -341,17 +350,20 @@ export class BabylonGeodesicGridPipeline
 
     /** Current vertical scale applied to DEM heights. */
     public get currentVerticalScale(): number {
-        return this.verticalScale;
+        return this.verticalScale.value;
     }
 
     /**
      * Changes the vertical scale of every elevated grid in place. Tiles keep
-     * the bounding volume reported with the scale they were loaded with; new
-     * tiles report volumes for the new scale.
+     * the bounding volume reported with the scale they were loaded with, unless
+     * their runtime was given the same `VerticalScale`; new tiles report volumes
+     * for the new scale.
      */
     public setVerticalScale(scale: number): void {
-        if (!Number.isFinite(scale) || scale < 0) throw new RangeError("The vertical scale must be non-negative.");
-        this.verticalScale = scale;
+        this.verticalScale.set(scale);
+    }
+
+    private applyVerticalScale(scale: number): void {
         for (const handle of this.handles) {
             if (!handle.elevated) continue;
             const positions = composeElevatedPositions(handle.elevated, scale);
@@ -448,7 +460,7 @@ export class BabylonGeodesicGridPipeline
                 z: elevated.up[vertex * 3 + 2]!,
             };
             if (up.x === 0 && up.y === 0) continue;
-            const normal = webMercatorSurfaceNormal(gradient, up, this.verticalScale);
+            const normal = webMercatorSurfaceNormal(gradient, up, this.verticalScale.value);
             // Keep the orientation Babylon gives the mesh: its winding convention decides which side is lit.
             const meshSide =
                 normals[vertex * 3]! * normal.x + normals[vertex * 3 + 1]! * normal.y + normals[vertex * 3 + 2]! * normal.z < 0 ? -1 : 1;
@@ -493,7 +505,7 @@ export class BabylonGeodesicGridPipeline
         const elevated = heightAt ? projectElevatedGrid(topology, handle.region, heightAt) : undefined;
         const geometry = elevated
             ? {
-                  positions: composeElevatedPositions(elevated, this.verticalScale),
+                  positions: composeElevatedPositions(elevated, this.verticalScale.value),
                   uvs: elevated.uvs,
                   indices: elevated.indices,
               }

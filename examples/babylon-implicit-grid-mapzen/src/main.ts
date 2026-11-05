@@ -5,6 +5,7 @@ import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import {
+    BabylonGltfTileAdapter,
     BabylonRasterPages,
     BabylonRasterTileAdapter,
     BabylonRuntimeDriver,
@@ -16,10 +17,12 @@ import {
     createGeodesicGridSource,
     cubeTiling,
     createGeospatialCamera,
+    OrbitalCamera,
     metadataTileAddress,
     type IGridElevationOptions,
     type ITerrainEngine,
     type ITerrainEngineInputs,
+    type IBabylonGltfTileHandle,
     type IBabylonRasterPage,
     createGeospatialRendererEngine,
     createGeospatialScene,
@@ -28,6 +31,8 @@ import {
     DenseImplicitSubtreeLoader,
     EcefSpatialMetric,
     TileRuntime,
+    VerticalScale,
+    radialVerticalFrame,
     WebMercatorTileMetrics,
     type IEcefCameraFrame,
     type ITileAddress,
@@ -39,6 +44,7 @@ import {
     CUBE_TILE_TOPOLOGY,
     CubeTileSurface,
     ReferenceSurface,
+    planetocentricDirection,
 } from "@spacexr/tiles";
 import {
     ChildHeightRanges,
@@ -50,8 +56,13 @@ import {
 } from "@spacexr/dem";
 
 import DemDecoderWorker from "./dem-decoder.worker?worker";
+import { createMoonObjects } from "./moon-objects";
 import { debugImageryTile } from "./debug-imagery";
-import { SYNTHETIC_MOON_RADIUS, loadSyntheticMoonTile } from "./synthetic-moon";
+import {
+    SYNTHETIC_MOON_RADIUS,
+    loadSyntheticMoonTile,
+    syntheticMoonHeight,
+} from "./synthetic-moon";
 import { loadLocalImagery } from "./local-imagery";
 import { clearMonitorPanel, renderMonitorPanel } from "./monitor-panel";
 
@@ -146,7 +157,8 @@ async function run(): Promise<void> {
     );
     if (!Number.isFinite(initialScale) || initialScale < 0)
         throw new RangeError("The scale parameter must be non-negative.");
-    let verticalScale = initialScale;
+    // Everything in the scene reads this one scale; the slider only changes it.
+    const verticalScale = new VerticalScale(initialScale);
     const dem =
         elevationEnabled && !moon ? createMapzenTerrariumSource() : undefined;
     const childHeightRanges = new ChildHeightRanges();
@@ -165,7 +177,10 @@ async function run(): Promise<void> {
     // Tiles start at 0/0. Each DEM reports the tile range and prepares the ranges of its four children.
     const preparedHeights =
         dem || (moon && elevationEnabled)
-            ? { ranges: childHeightRanges, verticalScale: () => verticalScale }
+            ? {
+                  ranges: childHeightRanges,
+                  verticalScale: () => verticalScale.value,
+              }
             : undefined;
     const source = moonSurface
         ? createCubeGridSource(moonSurface, preparedHeights, {
@@ -191,18 +206,44 @@ async function run(): Promise<void> {
               height: 0,
           }
         : montBlanc;
-    const camera = createGeospatialCamera(scene, {
-        name: "geographic-camera",
-        geodeticSystem,
-        target: {
-            latitudeDegrees: target.latitude,
-            longitudeDegrees: target.longitude,
-            heightMeters: dem ? target.height * verticalScale : 0,
-        },
-        radius: Number(parameters.get("radius") ?? (moon ? "400000" : "25000")),
-        pitchRadians: (Number(parameters.get("pitch") ?? "60") * Math.PI) / 180,
-        radiusMin: 500,
-    });
+    const pitchRadians =
+        (Number(parameters.get("pitch") ?? "60") * Math.PI) / 180;
+    const orbitRadius = Number(
+        parameters.get("radius") ?? (moon ? "400000" : "25000"),
+    );
+    // The Moon orbits with a camera that can cross its poles; `yaw` sets the heading in degrees.
+    const camera = moonSurface
+        ? new OrbitalCamera(scene, {
+              name: "orbital-camera",
+              surface: moonSurface.reference,
+              direction: planetocentricDirection(
+                  target.latitude,
+                  target.longitude,
+              ),
+              radius: orbitRadius,
+              pitchRadians,
+              headingRadians:
+                  (Number(parameters.get("yaw") ?? "0") * Math.PI) / 180,
+              radiusMin: 500,
+              ...(elevationEnabled
+                  ? {
+                        heightAt: syntheticMoonHeight,
+                        verticalScale,
+                    }
+                  : {}),
+          })
+        : createGeospatialCamera(scene, {
+              name: "geographic-camera",
+              geodeticSystem,
+              target: {
+                  latitudeDegrees: target.latitude,
+                  longitudeDegrees: target.longitude,
+                  heightMeters: dem ? target.height * verticalScale.value : 0,
+              },
+              radius: orbitRadius,
+              pitchRadians,
+              radiusMin: 500,
+          });
 
     if (solidRendering) {
         // Sun from the north-west, 45 degrees above the horizon of the target.
@@ -308,6 +349,7 @@ async function run(): Promise<void> {
             refinementHysteresisRatio: hysteresis,
             coarseningDelayFrames: coarsenDelay,
             maxConcurrentLoads: 12,
+            ...(moon ? { verticalScale } : {}),
             // Each imagery page holds a texture array layer of 257 x 257 texels: 512 pages bound the GPU memory.
             cache: { maxContentEntries: 512 },
         });
@@ -387,13 +429,12 @@ async function run(): Promise<void> {
                   maxDrapeDepth,
                   junctionBudgetMilliseconds: junctionBudget,
               });
-    verticalScaleInput.value = String(verticalScale);
-    verticalScaleValue.value = `x${verticalScale}`;
+    verticalScaleInput.value = String(verticalScale.value);
+    verticalScaleValue.value = `x${verticalScale.value}`;
     verticalScaleInput.disabled = !elevation;
     verticalScaleInput.addEventListener("input", () => {
-        verticalScale = Number(verticalScaleInput.value);
-        verticalScaleValue.value = `x${verticalScale}`;
-        terrain.setVerticalScale(verticalScale);
+        verticalScale.set(Number(verticalScaleInput.value));
+        verticalScaleValue.value = `x${verticalScale.value}`;
     });
 
     const adapter: IRuntimeAdapter<
@@ -423,8 +464,9 @@ async function run(): Promise<void> {
             parameters.get("balance") === "0"
                 ? false
                 : moon
-                  ? { topology: CUBE_TILE_TOPOLOGY }
+                  ? { topology: CUBE_TILE_TOPOLOGY, fillGaps: true }
                   : { wrapX: true },
+        ...(moon ? { verticalScale } : {}),
         // Terrain tiles of the view and around it; their DEM tiles are cached by the DEM pyramid.
         cache: { maxContentEntries: 1024 },
     });
@@ -432,6 +474,65 @@ async function run(): Promise<void> {
     const imageryRuntime = imageryPages
         ? createImageryRuntime(imageryPages)
         : undefined;
+
+    // `objects=1` places a hierarchy of glTF objects on the Moon, from a 3D Tiles tileset with its own runtime.
+    const objectsScene =
+        moonSurface && parameters.get("objects") === "1"
+            ? createMoonObjects(
+                  moonSurface.reference,
+                  planetocentricDirection(target.latitude, target.longitude),
+                  elevationEnabled ? syntheticMoonHeight : () => 0,
+              )
+            : undefined;
+    const objectPlacement = moonSurface
+        ? {
+              scale: verticalScale,
+              frame: radialVerticalFrame(moonSurface.reference),
+          }
+        : undefined;
+    // Only this scene needs the glTF loader: Web Mercator does not load it.
+    if (objectsScene) await import("@babylonjs/loaders/glTF/2.0/index.js");
+    const objectContent =
+        objectsScene && objectPlacement
+            ? new BabylonGltfTileAdapter(scene, {
+                  vertical: objectPlacement,
+                  fetch: async (input) => {
+                      const bytes = objectsScene.contents.get(String(input));
+                      return bytes
+                          ? new Response(bytes.slice().buffer, {
+                                headers: {
+                                    "content-type": "model/gltf-binary",
+                                },
+                            })
+                          : new Response(null, { status: 404 });
+                  },
+              })
+            : undefined;
+    const objectRuntime =
+        objectsScene && objectContent && objectPlacement
+            ? new TileRuntime<
+                  IEcefCameraFrame,
+                  IEcefSpatialState,
+                  IBabylonGltfTileHandle,
+                  never
+              >({
+                  id: "moon-objects",
+                  uri: "memory://moon-objects/tileset.json",
+                  adapter: {
+                      tilesets: {
+                          load: async () => ({ tileset: objectsScene.tileset }),
+                      },
+                      spatial: new EcefSpatialMetric({
+                          geodeticSystem,
+                          vertical: objectPlacement,
+                      }),
+                      activation: objectContent,
+                      presentation: objectContent,
+                  },
+                  maxScreenSpaceError: 8,
+                  verticalScale,
+              })
+            : undefined;
 
     const monitor = new BabylonRuntimeMonitor(
         engine,
@@ -462,8 +563,19 @@ async function run(): Promise<void> {
                   console.error("Imagery runtime frame failed", error),
           })
         : undefined;
+    const objectDriver = objectRuntime
+        ? new BabylonRuntimeDriver(objectRuntime, scene, {
+              camera,
+              onError: (error) =>
+                  console.error("Objects runtime frame failed", error),
+          })
+        : undefined;
     status.textContent = "Loading the implicit quadtree...";
-    await Promise.all([driver.start(), imageryDriver?.start()]);
+    await Promise.all([
+        driver.start(),
+        imageryDriver?.start(),
+        objectDriver?.start(),
+    ]);
     monitor.setStartupMilliseconds(performance.now() - startupStartedAt);
     const coverage = moon
         ? `Synthetic Moon on the cube index, 6 faces, LOD 0..${moonMaxLOD}`
@@ -473,6 +585,7 @@ async function run(): Promise<void> {
     // Objects of the example, for probes run from the browser console.
     (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = {
         renderer,
+        camera,
         runtime,
         imageryRuntime,
         terrain,
@@ -481,6 +594,12 @@ async function run(): Promise<void> {
             ? { pipeline: terrain.grids, drape: terrain.drape }
             : {}),
         imageryPages,
+        verticalScale,
+        objectRuntime,
+        objectsScene,
+        syntheticMoonHeight,
+        moonReference: moonSurface?.reference,
+        scene,
     };
 
     engine.runRenderLoop(() => {
@@ -498,9 +617,12 @@ async function run(): Promise<void> {
             window.removeEventListener("resize", resize);
             driver.dispose();
             imageryDriver?.dispose();
+            objectDriver?.dispose();
             unsubscribeEvents();
             void runtime.dispose();
             void imageryRuntime?.dispose();
+            void objectRuntime?.dispose();
+            objectContent?.dispose();
             // The engine releases its imagery bindings before the pages they read.
             terrain.dispose();
             imageryPages?.dispose();

@@ -1,5 +1,5 @@
 import { Matrix } from "@babylonjs/core/Maths/math.vector.js";
-import type { IEcefSpatialState } from "@spacexr/3d-tiles-runtime";
+import type { IEcefSpatialState, IVector3 } from "@spacexr/3d-tiles-runtime";
 
 /** Column-major rotation from glTF Y-up content axes to 3D Tiles Z-up axes. */
 export const GLTF_Y_UP_TO_3D_TILES_Z_UP: Readonly<Float64Array> = new Float64Array([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1]);
@@ -16,7 +16,17 @@ function multiply(left: ArrayLike<number>, right: ArrayLike<number>): Float64Arr
     return result;
 }
 
-/** Converts glTF Y-up content to 3D Tiles Z-up, then applies its local-to-ECEF transform. */
-export function createBabylonTileMatrix(spatial: IEcefSpatialState): Matrix {
-    return Matrix.FromArray(multiply(spatial.worldTransform, GLTF_Y_UP_TO_3D_TILES_Z_UP));
+/**
+ * Converts glTF Y-up content to 3D Tiles Z-up, then applies its local-to-ECEF transform.
+ *
+ * @param offset - Moves the content in ECEF metres, as the vertical scale of the scene does.
+ */
+export function createBabylonTileMatrix(spatial: IEcefSpatialState, offset?: Readonly<IVector3>): Matrix {
+    const matrix = multiply(spatial.worldTransform, GLTF_Y_UP_TO_3D_TILES_Z_UP);
+    if (offset) {
+        matrix[12]! += offset.x;
+        matrix[13]! += offset.y;
+        matrix[14]! += offset.z;
+    }
+    return Matrix.FromArray(matrix);
 }

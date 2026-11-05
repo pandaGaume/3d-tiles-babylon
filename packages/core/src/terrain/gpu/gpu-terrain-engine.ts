@@ -13,12 +13,14 @@ import type {
     ITileDeactivationContext,
     ITilePresentationContext,
 } from "@spacexr/3d-tiles-runtime";
+import type { VerticalScale } from "@spacexr/3d-tiles-runtime";
 import { DrapeInstanceCut, type IDrapeInstance } from "@spacexr/raster";
 import { tileAddressKey as key } from "@spacexr/tiles";
 
 import type { IBabylonTileResourceStatistics } from "../../monitor/runtime-monitor";
 import type { BabylonRasterPages } from "../../raster/raster-pages";
 import type { ITerrainEngine, ITerrainEngineInputs } from "../terrain-engine";
+import { sharedVerticalScale } from "../mesh/geodesic-grid-pipeline";
 import { regionWithHeights, tileIdentity, tileRegion } from "../terrain-tile";
 import { webMercatorTiling, type ITerrainTiling } from "../terrain-tiling";
 import { ElevationPages } from "./elevation-pages";
@@ -99,7 +101,8 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
     private readonly pageObserver: Observer<ITileAddress> | undefined;
     private readonly cameraObserver: Observer<Camera>;
     private placed: IPlacedInstance[] = [];
-    private verticalScale: number;
+    private readonly verticalScale: VerticalScale;
+    private readonly stopVerticalScale: () => void;
     private dirty = true;
     private created = 0;
     private released = 0;
@@ -110,21 +113,25 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
         this.cells = options.cells ?? 16;
         this.elevation = inputs.elevation;
         this.imageryPages = inputs.wireframe ? undefined : inputs.imageryPages;
-        this.verticalScale = inputs.elevation?.verticalScale ?? 1;
+        this.verticalScale = sharedVerticalScale(inputs.elevation?.verticalScale);
+        this.stopVerticalScale = this.verticalScale.subscribe((scale) => {
+            this.material.setFloat("verticalScale", scale);
+            this.pickSurface.setVerticalScale(scale);
+        });
         this.cut = new DrapeInstanceCut({
             topology: this.tiling.topology,
             ...(options.maxInstanceDepth === undefined ? {} : { maxDepth: options.maxInstanceDepth }),
             ...(options.holdMilliseconds === undefined ? {} : { holdMilliseconds: options.holdMilliseconds }),
         });
         // Shapes hold the half-cell lattice: the grid vertices and the edge midpoints.
-        this.shapes = new GridShapes(this.scene, 2 * this.cells, this.tiling.surface);
+        this.shapes = new GridShapes(this.scene, 2 * this.cells, this.tiling);
         this.elevations = new ElevationPages(this.scene, inputs.elevation?.pyramid, options.elevationPageSize ?? 257);
         this.pickSurface = new PickSurface(
             this.scene,
             inputs.elevation?.pyramid,
-            this.verticalScale,
+            this.verticalScale.value,
             options.pickCells ?? 8,
-            this.tiling.surface,
+            this.tiling,
         );
 
         this.material = new ShaderMaterial(
@@ -144,6 +151,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
                     "skyColor",
                     "groundColor",
                     "imagerySize",
+                    "inverseRadiiSquared",
                 ],
                 samplers: ["shapes", "elevations", "imagery"],
                 defines: [
@@ -155,11 +163,13 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
         this.material.backFaceCulling = false;
         this.material.wireframe = inputs.wireframe;
         this.material.setFloat("cells", this.cells);
-        this.material.setFloat("verticalScale", this.verticalScale);
+        this.material.setFloat("verticalScale", this.verticalScale.value);
         // The shaded colour of the mesh engine where no imagery is draped.
         this.material.setColor3("baseColor", new Color3(0.47, 0.5, 0.45));
         this.material.setTexture("shapes", this.shapes.pool);
         this.material.setTexture("elevations", this.elevations.pool);
+        const radii = this.tiling.referenceRadii;
+        if (radii) this.material.setVector3("inverseRadiiSquared", new Vector3(1 / radii[0] ** 2, 1 / radii[1] ** 2, 1 / radii[2] ** 2));
         if (this.imageryPages) {
             this.material.setTexture("imagery", this.imageryPages.pool);
             this.material.setFloat("imagerySize", this.imageryPages.size);
@@ -196,15 +206,16 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
                     // The tile starts at 0/0; its DEM gives the measured height range.
                     ...(heights && !Number.isNaN(heights.range.minimum) && !Number.isNaN(heights.range.maximum)
                         ? {
-                              tileBoundingVolume: this.tiling.boundingBox
-                                  ? {
-                                        box: this.tiling.boundingBox(
-                                            identity,
-                                            heights.range.minimum * this.verticalScale,
-                                            heights.range.maximum * this.verticalScale,
-                                        ) as never,
-                                    }
-                                  : { region: regionWithHeights(tileRegion(context), heights.range, this.verticalScale) },
+                              tileBoundingVolume: () =>
+                                  this.tiling.boundingBox
+                                      ? {
+                                            box: this.tiling.boundingBox(
+                                                identity,
+                                                heights.range.minimum * this.verticalScale.value,
+                                                heights.range.maximum * this.verticalScale.value,
+                                            ) as never,
+                                        }
+                                      : { region: regionWithHeights(tileRegion(context), heights.range, this.verticalScale.value) },
                           }
                         : {}),
                 });
@@ -269,12 +280,11 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
     }
 
     public setVerticalScale(scale: number): void {
-        this.verticalScale = scale;
-        this.material.setFloat("verticalScale", scale);
-        this.pickSurface.setVerticalScale(scale);
+        this.verticalScale.set(scale);
     }
 
     public dispose(): void {
+        this.stopVerticalScale();
         this.scene.onBeforeCameraRenderObservable.remove(this.cameraObserver);
         if (this.pageObserver) this.imageryPages?.changed.remove(this.pageObserver);
         this.releaseResources(this.placed);
@@ -322,12 +332,12 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
             const demTiles: ITileAddress[] = [];
             place[offset + 3] = this.shapes.acquire(address) ?? 0;
 
-            const center = this.tiling.surface.point(address, 0.5, 0.5);
+            const center = this.tiling.center(address);
             if (this.tiling.radialHeights) {
                 // Radial heights follow the direction of each vertex, from the tile centre; the shape is not turned.
                 rotation.set([center.x, center.y, center.z, instance.finerEdges], offset);
             } else {
-                const longitude = this.tiling.surface.shape(address).rotation;
+                const longitude = this.tiling.rotation(address);
                 rotation.set([Math.cos(longitude), Math.sin(longitude), (2 * Math.PI) / 2 ** address.lod, instance.finerEdges], offset);
             }
 
@@ -365,7 +375,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
         demTiles.push(demTile);
         // The tile is never coarser than the DEM tile; it may lie outside it, on its edge, for a neighbour's DEM, turned
         // across a cube face. The fraction of the layer holds the quarter turns.
-        const area = this.tiling.topology.areaIn(address, demTile);
+        const area = this.tiling.demArea(address, demTile);
         return [area.west, area.north, area.size, layer + area.turns / 4];
     }
 

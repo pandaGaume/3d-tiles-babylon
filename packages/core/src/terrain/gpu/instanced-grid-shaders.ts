@@ -38,8 +38,18 @@ uniform float verticalScale;
 uniform sampler2DArray shapes;
 uniform sampler2DArray elevations;
 
-varying vec3 vNormal;
 varying vec3 vImagery;
+#ifdef RADIAL_HEIGHTS
+// Inverse squared radii of the reference surface.
+uniform vec3 inverseRadiiSquared;
+varying vec2 vTile;
+varying vec4 vPage;
+varying vec3 vUp;
+varying vec3 vEast;
+varying vec3 vSouth;
+#else
+varying vec3 vNormal;
+#endif
 
 int steps() {
     return int(2.0 * cells + 0.5);
@@ -67,15 +77,23 @@ vec4 elevationAt(ivec2 h) {
 float heightIn(vec4 reference, vec2 uv) {
     if (reference.w < 0.0) return 0.0;
     float size = float(textureSize(elevations, 0).x);
+#ifdef RADIAL_HEIGHTS
     int turns = int(fract(reference.w) * 4.0 + 0.5);
     vec2 turned = uv;
     if (turns == 1) turned = vec2(1.0 - uv.y, uv.x);
     else if (turns == 2) turned = vec2(1.0 - uv.x, 1.0 - uv.y);
     else if (turns == 3) turned = vec2(uv.y, 1.0 - uv.x);
     vec2 texel = (reference.xy + turned * reference.z) * (size - 1.0);
+#else
+    vec2 texel = (reference.xy + uv * reference.z) * (size - 1.0);
+#endif
     ivec2 base = clamp(ivec2(floor(texel)), ivec2(0), ivec2(int(size) - 2));
     vec2 f = clamp(texel - vec2(base), 0.0, 1.0);
+#ifdef RADIAL_HEIGHTS
     int layer = int(floor(reference.w));
+#else
+    int layer = int(reference.w + 0.5);
+#endif
     float h00 = texelFetch(elevations, ivec3(base, layer), 0).r;
     float h10 = texelFetch(elevations, ivec3(base + ivec2(1, 0), layer), 0).r;
     float h01 = texelFetch(elevations, ivec3(base + ivec2(0, 1), layer), 0).r;
@@ -116,8 +134,18 @@ vec3 positionAt(ivec2 h) {
 #ifdef RADIAL_HEIGHTS
 // Position of a lattice point on the reference surface, relative to the tile centre.
 vec3 shapePosition(ivec2 h) {
+    return texelFetch(shapes, ivec3(h, int(instPlace.w + 0.5)), 0).xyz;
+}
+
+// Tangent of the reference surface per unit of tile coordinate, along the chord between two lattice points clamped to
+// the tile. A chord one-sided at a tile edge leans by half a cell of curvature: its projection on the tangent plane does
+// not, so both sides of an edge agree.
+vec3 surfaceTangent(ivec2 before, ivec2 after, vec3 normal) {
     int last = steps();
-    return texelFetch(shapes, ivec3(clamp(h, ivec2(0), ivec2(last)), int(instPlace.w + 0.5)), 0).xyz;
+    ivec2 first = clamp(before, ivec2(0), ivec2(last));
+    ivec2 second = clamp(after, ivec2(0), ivec2(last));
+    vec3 chord = (shapePosition(second) - shapePosition(first)) * float(last) / float(second.x - first.x + second.y - first.y);
+    return chord - normal * dot(chord, normal);
 }
 #endif
 
@@ -134,19 +162,22 @@ void main(void) {
     ivec2 h = ivec2(floor(position.xy * float(steps()) + 0.5));
     vec3 local = positionAt(h);
 
+#ifdef RADIAL_HEIGHTS
+    // The fragment stage computes the normal from the DEM: it needs the tangents of the reference surface and the page.
+    vec3 body = instRotation.xyz + shapePosition(h);
+    vec3 surfaceNormal = normalize(body * inverseRadiiSquared);
+    vUp = normalize(body);
+    vEast = surfaceTangent(h - ivec2(2, 0), h + ivec2(2, 0), surfaceNormal);
+    vSouth = surfaceTangent(h - ivec2(0, 2), h + ivec2(0, 2), surfaceNormal);
+    vTile = position.xy;
+    vPage = instElevation;
+#else
     // Normal of the displaced surface, from the neighbours one cell away, clamped to the tile: east cross north.
     vec3 eastward = positionAt(h + ivec2(2, 0)) - positionAt(h - ivec2(2, 0));
     vec3 northward = positionAt(h - ivec2(0, 2)) - positionAt(h + ivec2(0, 2));
     vec3 normal = normalize(cross(eastward, northward));
-#ifdef RADIAL_HEIGHTS
-    // On a tile edge the differences are one-sided, which tilts the normal by half a cell of curvature: visible on the
-    // coarse tiles of a whole body. Remove the tilt of the undisplaced surface, known exactly from the ray.
-    vec3 flatEast = shapePosition(h + ivec2(2, 0)) - shapePosition(h - ivec2(2, 0));
-    vec3 flatNorth = shapePosition(h - ivec2(0, 2)) - shapePosition(h + ivec2(0, 2));
-    normal = normalize(normal + normalize(instRotation.xyz + shapePosition(h)) - normalize(cross(flatEast, flatNorth)));
-#endif
-
     vNormal = rotate(normal);
+#endif
     vImagery = vec3(instImagery.xy + position.xy * instImagery.z, instImagery.w);
     gl_Position = viewProjection * vec4(rotate(local) + instPlace.xyz, 1.0);
 }
@@ -156,8 +187,18 @@ export const INSTANCED_GRID_FRAGMENT = /* glsl */ `
 precision highp float;
 precision highp sampler2DArray;
 
-varying vec3 vNormal;
 varying vec3 vImagery;
+#ifdef RADIAL_HEIGHTS
+varying vec2 vTile;
+varying vec4 vPage;
+varying vec3 vUp;
+varying vec3 vEast;
+varying vec3 vSouth;
+uniform sampler2DArray elevations;
+uniform float verticalScale;
+#else
+varying vec3 vNormal;
+#endif
 
 uniform vec3 baseColor;
 // Directional light: direction towards the light, colour times intensity.
@@ -172,6 +213,33 @@ uniform sampler2DArray imagery;
 uniform float imagerySize;
 #endif
 
+#ifdef RADIAL_HEIGHTS
+// Gradient of the height per texel at a sample of a DEM page: central differences, one-sided on the edges of the page.
+vec2 sampleGradient(ivec2 p, int layer, int last) {
+    ivec2 low = max(p - ivec2(1), ivec2(0));
+    ivec2 high = min(p + ivec2(1), ivec2(last));
+    float west = texelFetch(elevations, ivec3(low.x, p.y, layer), 0).r;
+    float east = texelFetch(elevations, ivec3(high.x, p.y, layer), 0).r;
+    float north = texelFetch(elevations, ivec3(p.x, low.y, layer), 0).r;
+    float south = texelFetch(elevations, ivec3(p.x, high.y, layer), 0).r;
+    return vec2((east - west) / float(high.x - low.x), (south - north) / float(high.y - low.y));
+}
+
+// Gradient of the height per unit of tile coordinate, at a point of a DEM page: the gradients of its four nearest samples
+// interpolated, so that lighting stays smooth across the cells of the DEM.
+vec2 heightGradient(vec4 page, vec2 uv) {
+    if (page.w < 0.0) return vec2(0.0);
+    int last = textureSize(elevations, 0).x - 1;
+    vec2 texel = (page.xy + uv * page.z) * float(last);
+    ivec2 base = clamp(ivec2(floor(texel)), ivec2(0), ivec2(last - 1));
+    vec2 f = clamp(texel - vec2(base), 0.0, 1.0);
+    int layer = int(floor(page.w + 0.5));
+    vec2 top = mix(sampleGradient(base, layer, last), sampleGradient(base + ivec2(1, 0), layer, last), f.x);
+    vec2 bottom = mix(sampleGradient(base + ivec2(0, 1), layer, last), sampleGradient(base + ivec2(1, 1), layer, last), f.x);
+    return mix(top, bottom, f.y) * page.z * float(last) * verticalScale;
+}
+#endif
+
 void main(void) {
     vec3 albedo = baseColor;
 #ifdef IMAGERY
@@ -182,7 +250,15 @@ void main(void) {
         albedo = textureLod(imagery, vec3(uv, floor(vImagery.z + 0.5)), 0.0).rgb;
     }
 #endif
+#ifdef RADIAL_HEIGHTS
+    // The normal of the displaced surface reads the DEM at each pixel, not the vertices of the grid: relief finer than a
+    // cell shows, and both sides of a tile edge read the same slope.
+    vec3 up = normalize(vUp);
+    vec2 gradient = heightGradient(vPage, vTile);
+    vec3 normal = normalize(cross(vEast + up * gradient.x, -(vSouth + up * gradient.y)));
+#else
     vec3 normal = normalize(vNormal);
+#endif
     // The lighting of the Babylon standard material, without specular.
     vec3 light = sunColor * max(dot(normal, sunDirection), 0.0) + mix(groundColor, skyColor, 0.5 * dot(normal, skyDirection) + 0.5);
     gl_FragColor = vec4(clamp(albedo * light, 0.0, 1.0), 1.0);
