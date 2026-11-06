@@ -76,6 +76,8 @@ npm run check
 
 The links are declared as `file:` dependencies of the root `package.json`. Once 3d-tiles-core is published, removing them is enough: the packages already depend on version `0.1.0`.
 
+The CI builds against `main` of 3d-tiles-core, or against its branch with the name of the pull request branch when there is one. A change spanning both repositories uses one branch name, so its pull request here passes before core merges. Merge core first: `main` here builds against `main` of core. Delete the branch in core once merged, or a later branch with that name would build against it.
+
 Run an example:
 
 ```bash
