@@ -89,7 +89,7 @@ async function run(): Promise<void> {
     };
     const tileLabels = requiredElement("tile-labels", HTMLDivElement);
     const parameters = new URLSearchParams(window.location.search);
-    // `renderer=webgpu` renders with WebGPU where the browser supports it, WebGL otherwise.
+    // `renderer=webgpu` runs the GLSL shaders, converted by Babylon, on its WebGPU engine where the browser supports it, WebGL otherwise.
     const { engine, renderer } = await createGeospatialRendererEngine(
         canvas,
         parameters.get("renderer") === "webgpu" ? "webgpu" : "webgl",
@@ -584,7 +584,7 @@ async function run(): Promise<void> {
     const coverage = moon
         ? `Synthetic Moon on the cube index, 6 faces, LOD 0..${moonMaxLOD}`
         : `Global WebMercator coverage, ${source.tileset.root.children?.length ?? 0} roots, LOD ${TILE_METRICS.minLOD}..${TILE_METRICS.maxLOD}`;
-    status.textContent = `${coverage} | ${renderer === "webgpu" ? "WebGPU" : "WebGL"}`;
+    status.textContent = `${coverage} | ${renderer === "webgpu" ? "GLSL converted for WebGPU" : "WebGL"}`;
 
     // Objects of the example, for probes run from the browser console.
     (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = {

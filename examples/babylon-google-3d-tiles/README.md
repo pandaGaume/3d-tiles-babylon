@@ -69,7 +69,7 @@ The preview server reads `GOOGLE_MAP_TILES_API_KEY` from `.env` when it starts a
 
 Run these commands from the repository root, where the npm workspace `package.json` is located.
 
-Add `?renderer=webgpu` to the page URL to render with WebGPU where the browser supports it; the example falls back to WebGL otherwise and shows the renderer in its status line.
+The example renders with WebGL. Add `?renderer=webgpu` to the page URL to run its GLSL shaders, converted by Babylon.js, on the WebGPU engine where the browser supports it; no shader is written for WebGPU. It falls back to WebGL otherwise and shows what it runs on in its status line.
 
 ## Coordinate frames
 

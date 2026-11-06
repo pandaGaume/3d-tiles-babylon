@@ -36,10 +36,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - `createGeospatialWebGPUEngine` and `createGeospatialRendererEngine` create a WebGPU engine with large world rendering and the maximum limits of the adapter, falling back to WebGL where the browser lacks WebGPU. Shaders stay in GLSL, converted to WGSL by Babylon on WebGPU. Both examples take a `renderer=webgpu` URL parameter.
 
-- Imagery draping and the GPU terrain engine render on WebGPU: `TextureArrayPool` has a WebGPU backend, which writes single layers through Babylon's texture helper and copies every layer, float layers included, when the array grows. The drape plugin declares itself GLSL only and its materials are created with `forceGLSL`, pages are sampled at an explicit level so that the converted shaders keep WGSL's uniform control flow, and the GPU terrain engine interleaves its 12 instance attributes in one vertex buffer, within the 8 vertex buffers WebGPU devices may bind.
+- Imagery draping and the GPU terrain engine run on the WebGPU engine of Babylon.js, their GLSL shaders converted: `TextureArrayPool` has a WebGPU backend, which writes single layers through Babylon's texture helper and copies every layer, float layers included, when the array grows. The drape plugin declares itself GLSL only and its materials are created with `forceGLSL`, pages are sampled at an explicit level so that the converted shaders keep WGSL's uniform control flow, and the GPU terrain engine interleaves its 12 instance attributes in one vertex buffer, within the 8 vertex buffers WebGPU devices may bind.
 
 ### Changed
 
+- The status of the renderer is stated as it is: the package renders with WebGL, every shader is written in GLSL, and none is written for WebGPU. `renderer=webgpu` runs those shaders converted by Babylon.js, and the status line of the examples says so.
 - The Google example uses the split activation and presentation ports instead of the legacy content adapter, and detects external tilesets from the payload instead of the media type or `.json` extension.
 - The implicit grid example builds its grids with `@spacexr/grid`: alternating diagonals, and edges reconnected to the levels of detail displayed next to each tile whenever the presentation changes. The `junctions` URL parameter selects which tile adapts: `fine` (default), `coarse` or `none`.
 - The implicit grid example samples stitched DEM tiles in `point` registration, which removes the height cracks between grids of the same level.
@@ -53,7 +54,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
-- The monitor reports GPU frame time on WebGPU: `createGeospatialWebGPUEngine` enables the features of the adapter, timestamp queries included, and the monitor registers the WebGPU time query extension.
+- The monitor reports GPU frame time on the WebGPU engine: `createGeospatialWebGPUEngine` enables the features of the adapter, timestamp queries included, and the monitor registers the WebGPU time query extension.
 - The example dev servers serve the dependencies Vite pre-bundles with `Cache-Control: no-store`. Vite marks them immutable for a year, but `vite --force` rebuilds them at every start: a browser keeping the chunks of an earlier session mixed two builds of Babylon.js in one page, whose shader includes went missing, and Babylon compiled the HTML page it fetched in their place.
 - Turning the camera in the Google example no longer reloads the tiles it just saw. The cause was in the runtime defaults, fixed in 3d-tiles-core: a cache retention of 120 runtime frames, about 6 seconds while the camera turns, and 256 cached contents. The examples now only set their memory budgets and the parameters of their tilesets.
 
