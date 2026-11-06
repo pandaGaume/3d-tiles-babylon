@@ -124,7 +124,7 @@ const terrain = new GpuTerrainEngine({ ...inputs, tiling: cubeTiling(surface) })
 // Balance the runtime across faces: quadtreeBalance: { topology: CUBE_TILE_TOPOLOGY }
 ```
 
-Elevation and imagery tiles hold their shared edges: pyramids take `prestitched: true`. See `docs/celestial-tiling.md` of 3d-tiles-core.
+Elevation and imagery tiles hold their shared edges: pyramids take `registration: "point"`. See `docs/celestial-tiling.md` of 3d-tiles-core.
 
 ## License
 
