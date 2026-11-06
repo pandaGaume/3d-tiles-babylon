@@ -47,6 +47,11 @@ varying vec4 vPage;
 varying vec3 vUp;
 varying vec3 vEast;
 varying vec3 vSouth;
+// References of the DEM across each edge of the tile, for the slope of the fragment stage on the edges of a page.
+varying vec4 vEdgeN;
+varying vec4 vEdgeE;
+varying vec4 vEdgeS;
+varying vec4 vEdgeW;
 #else
 varying vec3 vNormal;
 #endif
@@ -171,6 +176,10 @@ void main(void) {
     vSouth = surfaceTangent(h - ivec2(0, 2), h + ivec2(0, 2), surfaceNormal);
     vTile = position.xy;
     vPage = instElevation;
+    vEdgeN = instEdgeN;
+    vEdgeE = instEdgeE;
+    vEdgeS = instEdgeS;
+    vEdgeW = instEdgeW;
 #else
     // Normal of the displaced surface, from the neighbours one cell away, clamped to the tile: east cross north.
     vec3 eastward = positionAt(h + ivec2(2, 0)) - positionAt(h - ivec2(2, 0));

@@ -57,6 +57,8 @@ export interface ITerrainTiling {
     ): { center: ICartesian3; positions: Float32Array };
     /** Area of a tile in a DEM tile, the DEM of a neighbour included. */
     demArea(address: ITileAddress, demTile: ITileAddress): ITerrainDemArea;
+    /** Roots of a tiling covering a whole body: the engine then draws coarse terrain where the selection left no tile. */
+    readonly coverRoots?: readonly ITileAddress[];
 }
 
 /** Web Mercator tiling on an ellipsoid, without the poles. */
@@ -121,5 +123,6 @@ export function cubeTiling(surface: CubeTileSurface): ITerrainTiling {
             });
         },
         demArea: (address, demTile) => CUBE_TILE_TOPOLOGY.areaIn(address, demTile),
+        coverRoots: [0, 1, 2, 3, 4, 5].map((face) => ({ face, lod: 0, x: 0, y: 0 })),
     };
 }

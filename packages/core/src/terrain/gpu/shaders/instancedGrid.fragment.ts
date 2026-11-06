@@ -11,6 +11,10 @@ varying vec4 vPage;
 varying vec3 vUp;
 varying vec3 vEast;
 varying vec3 vSouth;
+varying vec4 vEdgeN;
+varying vec4 vEdgeE;
+varying vec4 vEdgeS;
+varying vec4 vEdgeW;
 uniform sampler2DArray elevations;
 uniform float verticalScale;
 #else
@@ -27,14 +31,46 @@ uniform sampler2DArray imagery;
 uniform float imagerySize;
 #endif
 #ifdef RADIAL_HEIGHTS
-vec2 sampleGradient(ivec2 p, int layer, int last) {
-ivec2 low = max(p - ivec2(1), ivec2(0));
-ivec2 high = min(p + ivec2(1), ivec2(last));
-float west = texelFetch(elevations, ivec3(low.x, p.y, layer), 0).r;
-float east = texelFetch(elevations, ivec3(high.x, p.y, layer), 0).r;
-float north = texelFetch(elevations, ivec3(p.x, low.y, layer), 0).r;
-float south = texelFetch(elevations, ivec3(p.x, high.y, layer), 0).r;
-return vec2((east - west) / float(high.x - low.x), (south - north) / float(high.y - low.y));
+float heightAcross(vec4 reference, vec2 uv, int last) {
+float w = reference.w + 0.125;
+int turns = int(fract(w) * 4.0);
+vec2 turned = uv;
+if (turns == 1) turned = vec2(1.0 - uv.y, uv.x);
+else if (turns == 2) turned = vec2(1.0 - uv.x, 1.0 - uv.y);
+else if (turns == 3) turned = vec2(uv.y, 1.0 - uv.x);
+vec2 texel = (reference.xy + turned * reference.z) * float(last);
+ivec2 base = clamp(ivec2(floor(texel)), ivec2(0), ivec2(last - 1));
+vec2 f = clamp(texel - vec2(base), 0.0, 1.0);
+int layer = int(floor(w));
+float h00 = texelFetch(elevations, ivec3(base, layer), 0).r;
+float h10 = texelFetch(elevations, ivec3(base + ivec2(1, 0), layer), 0).r;
+float h01 = texelFetch(elevations, ivec3(base + ivec2(0, 1), layer), 0).r;
+float h11 = texelFetch(elevations, ivec3(base + ivec2(1, 1), layer), 0).r;
+return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
+}
+bool otherPage(vec4 reference, int layer) {
+return reference.w >= 0.0 && int(floor(reference.w + 0.125)) != layer;
+}
+vec2 sampleGradient(ivec2 p, vec4 page, int layer, int last) {
+float center = texelFetch(elevations, ivec3(p, layer), 0).r;
+vec2 origin = page.xy;
+float perTexel = 1.0 / (float(last) * page.z);
+vec2 uv = (vec2(p) / float(last) - origin) / page.z;
+float west = center;
+float east = center;
+float north = center;
+float south = center;
+float dx = 0.0;
+float dy = 0.0;
+if (p.x > 0) { west = texelFetch(elevations, ivec3(p.x - 1, p.y, layer), 0).r; dx += 1.0; }
+else if (otherPage(vEdgeW, layer)) { west = heightAcross(vEdgeW, uv - vec2(perTexel, 0.0), last); dx += 1.0; }
+if (p.x < last) { east = texelFetch(elevations, ivec3(p.x + 1, p.y, layer), 0).r; dx += 1.0; }
+else if (otherPage(vEdgeE, layer)) { east = heightAcross(vEdgeE, uv + vec2(perTexel, 0.0), last); dx += 1.0; }
+if (p.y > 0) { north = texelFetch(elevations, ivec3(p.x, p.y - 1, layer), 0).r; dy += 1.0; }
+else if (otherPage(vEdgeN, layer)) { north = heightAcross(vEdgeN, uv - vec2(0.0, perTexel), last); dy += 1.0; }
+if (p.y < last) { south = texelFetch(elevations, ivec3(p.x, p.y + 1, layer), 0).r; dy += 1.0; }
+else if (otherPage(vEdgeS, layer)) { south = heightAcross(vEdgeS, uv + vec2(0.0, perTexel), last); dy += 1.0; }
+return vec2((east - west) / dx, (south - north) / dy);
 }
 vec2 heightGradient(vec4 page, vec2 uv) {
 if (page.w < 0.0) return vec2(0.0);
@@ -43,8 +79,8 @@ vec2 texel = (page.xy + uv * page.z) * float(last);
 ivec2 base = clamp(ivec2(floor(texel)), ivec2(0), ivec2(last - 1));
 vec2 f = clamp(texel - vec2(base), 0.0, 1.0);
 int layer = int(floor(page.w + 0.5));
-vec2 top = mix(sampleGradient(base, layer, last), sampleGradient(base + ivec2(1, 0), layer, last), f.x);
-vec2 bottom = mix(sampleGradient(base + ivec2(0, 1), layer, last), sampleGradient(base + ivec2(1, 1), layer, last), f.x);
+vec2 top = mix(sampleGradient(base, page, layer, last), sampleGradient(base + ivec2(1, 0), page, layer, last), f.x);
+vec2 bottom = mix(sampleGradient(base + ivec2(0, 1), page, layer, last), sampleGradient(base + ivec2(1, 1), page, layer, last), f.x);
 return mix(top, bottom, f.y) * page.z * float(last) * verticalScale;
 }
 #endif
