@@ -55,11 +55,13 @@ const content = new BabylonGltfTileAdapter(scene, {
 });
 ```
 
-## WebGL and WebGPU
+## Renderer status
 
-`createGeospatialRendererEngine(canvas, "webgpu")` creates a WebGPU engine where the browser supports WebGPU and a WebGL engine otherwise, and reports which one it created. Support is checked before the canvas is bound, since a canvas holding a WebGPU context can no longer hold a WebGL one. The WebGPU engine requests the maximum limits of the adapter: WebGPU only guarantees 256 texture array layers.
+**This package renders with WebGL. Every shader is written in GLSL, and none is written for WebGPU.** Running on the WebGPU engine of Babylon.js only checks that those shaders survive its conversion to WGSL: it is not a WebGPU implementation, and it brings no WebGPU technique such as storage buffers or compute shaders.
 
-Shaders stay in GLSL, for the browsers and Babylon.js versions without WebGPU; on WebGPU, Babylon converts them to WGSL with its glslang and twgsl compilers, downloaded from the Babylon.js CDN on first use. glTF content, the geospatial camera, large world rendering, picking, the runtime, imagery draping and both terrain engines work on both. `TextureArrayPool` writes single layers with `texSubImage3D` on WebGL 2 and with Babylon's texture helper on WebGPU, where growing the array also copies float layers. Materials carrying the GLSL drape plugin are created with `forceGLSL`, so that Babylon converts them as a whole on WebGPU. The GPU terrain engine interleaves its instance attributes in one vertex buffer: WebGPU devices may bind only 8 vertex buffers to a pipeline.
+`createGeospatialRendererEngine(canvas, "webgpu")` creates that engine where the browser supports WebGPU and a WebGL engine otherwise, and reports which one it created. Support is checked before the canvas is bound, since a canvas holding a WebGPU context can no longer hold a WebGL one. The WebGPU engine requests the maximum limits of the adapter: WebGPU only guarantees 256 texture array layers.
+
+On that engine, Babylon converts the GLSL shaders to WGSL with its glslang and twgsl compilers, downloaded from the Babylon.js CDN on first use. glTF content, the geospatial camera, large world rendering, picking, the runtime, imagery draping and both terrain engines run through this conversion. The code of this package specific to that engine only creates it, writes and copies texture array layers, and registers its frame timing. `TextureArrayPool` writes single layers with `texSubImage3D` on WebGL 2 and with Babylon's texture helper on WebGPU, where growing the array also copies float layers. Materials carrying the GLSL drape plugin are created with `forceGLSL`, so that Babylon converts them as a whole on WebGPU. The GPU terrain engine interleaves its instance attributes in one vertex buffer: WebGPU devices may bind only 8 vertex buffers to a pipeline.
 
 ```ts
 const { engine, renderer } = await createGeospatialRendererEngine(canvas, "webgpu");

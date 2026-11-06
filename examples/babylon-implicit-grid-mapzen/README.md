@@ -54,7 +54,7 @@ The camera starts above the Mont Blanc summit. URL parameters:
 | `subtrees=13/4252/2920/13` | Terrain subtrees with their own levels, `lod/x/y/maxLOD` separated by commas: from each root tile down, the grid stops at `maxLOD`, or refines deeper                                                                            |
 | `objects=1`                | With `body=moon`, a hierarchy of glTF objects from a 3D Tiles tileset in memory, on the terrain at `lat` and `lon`, following the altitude scale. Use with `solid=1`, as objects need the lights                                 |
 | `body=moon`                | A whole synthetic Moon on the cube index, poles included, with the GPU engine, without network; `lat` and `lon` set the target. The relief depends on the direction alone, so a crack between tiles would be a bug of the tiling |
-| `renderer=webgpu`          | Renders with WebGPU where the browser supports it, WebGL otherwise                                                                                                                                                               |
+| `renderer=webgpu`          | Runs the GLSL shaders, converted by Babylon.js, on its WebGPU engine where the browser supports it, WebGL otherwise. No shader is written for WebGPU                                                                             |
 | `monitor=0`                | Disables the monitoring overlay and its counters                                                                                                                                                                                 |
 
 The Mapzen attribution is displayed in the bottom-right corner.
