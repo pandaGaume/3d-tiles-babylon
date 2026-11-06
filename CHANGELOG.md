@@ -40,6 +40,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- The CI builds against the branch of 3d-tiles-core with the name of the pull request branch when there is one, and `main` otherwise, so that a change spanning both repositories no longer fails until core merges.
 - The status of the renderer is stated as it is: the package renders with WebGL, every shader is written in GLSL, and none is written for WebGPU. `renderer=webgpu` runs those shaders converted by Babylon.js, and the status line of the examples says so.
 - The Google example uses the split activation and presentation ports instead of the legacy content adapter, and detects external tilesets from the payload instead of the media type or `.json` extension.
 - The implicit grid example builds its grids with `@spacexr/grid`: alternating diagonals, and edges reconnected to the levels of detail displayed next to each tile whenever the presentation changes. The `junctions` URL parameter selects which tile adapts: `fine` (default), `coarse` or `none`.
