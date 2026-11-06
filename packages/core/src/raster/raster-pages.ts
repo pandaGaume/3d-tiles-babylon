@@ -25,7 +25,8 @@ export interface IBabylonRasterPage {
  * Imagery pages shared by every draping engine: a stitched raster pyramid, the GPU texture array holding the pages,
  * and the index of resident pages that bindings look up.
  *
- * A page is the stitched raster of one tile, `tileSize + 1` texels wide in point registration, so that neighbouring
+ * A page is the stitched raster of one tile, `tileSize + 1` texels wide in point registration whatever the
+ * registration declared by the source, so that neighbouring
  * pages hold the same texels on their shared edge. When a neighbour arrives later, the pages it completes are
  * written again. `changed` notifies every page that became resident, was rewritten or left.
  */

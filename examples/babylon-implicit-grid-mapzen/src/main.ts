@@ -279,6 +279,8 @@ async function run(): Promise<void> {
                         debugImageryTile(address, moon ? 257 : 256),
                     ),
                 maxLOD: 20,
+                // Drawn pixel by pixel; on the cube, on its samples.
+                registration: moon ? ("point" as const) : ("area" as const),
                 attribution: "",
             }
           : await loadLocalImagery(imagery);
@@ -291,7 +293,8 @@ async function run(): Promise<void> {
         ? new BabylonRasterPages(scene, {
               load: imagerySource.load,
               maxLOD: imageryMetrics.maxLOD,
-              ...(moon ? { prestitched: true } : { wrapX: true }),
+              registration: imagerySource.registration,
+              ...(moon ? {} : { wrapX: true }),
               tileSize: imageryMetrics.tileSize,
           })
         : undefined;
@@ -359,7 +362,7 @@ async function run(): Promise<void> {
         ? elevationEnabled
             ? {
                   pyramid: new DemPyramid({
-                      prestitched: true,
+                      registration: "point",
                       load: loadSyntheticMoonTile,
                       maxLOD: moonDemMaxLOD,
                       cacheEntries: 512,
@@ -372,6 +375,7 @@ async function run(): Promise<void> {
         : dem
           ? {
                 pyramid: new DemPyramid({
+                    registration: dem.source.registration,
                     load: webDemTileLoader(
                         dem,
                         // PNG and elevation decoding take about 60 ms per tile; workers keep it off the render loop.

@@ -96,7 +96,7 @@ describe("cube terrain", () => {
     });
 
     it("loads prestitched elevation for tiles of different faces", async () => {
-        const pyramid = new DemPyramid({ prestitched: true, maxLOD: 2, load: (address) => Promise.resolve(tile(address)) });
+        const pyramid = new DemPyramid({ registration: "point", maxLOD: 2, load: (address) => Promise.resolve(tile(address)) });
         const address = { face: 5, lod: 2, x: 1, y: 2 };
         const heights = await pyramid.tileHeights(address);
         expect(heights?.sampler(0.5, 0.5)).toBeCloseTo(relief(cubeTileDirection(address, 0.5, 0.5)), 2);

@@ -1,5 +1,5 @@
 import type { IRasterGrid } from "@spacexr/raster";
-import type { ITileAddress } from "@spacexr/tiles";
+import type { ITileAddress, RasterRegistration } from "@spacexr/tiles";
 
 /** Imagery pyramid provided by a module kept out of the repository. */
 export interface ILocalImagery {
@@ -9,6 +9,8 @@ export interface ILocalImagery {
     ) => Promise<IRasterGrid<Uint8Array | Uint8ClampedArray> | undefined>;
     /** Deepest level of the pyramid. */
     maxLOD: number;
+    /** Where the pixels of its tiles lie, declared by the source. */
+    registration: RasterRegistration;
     /** Text to display with the imagery. */
     attribution?: string;
 }
