@@ -88,6 +88,16 @@ npm run example:google-3d-tiles
 
 The Google example needs a Map Tiles API key; see its [README](examples/babylon-google-3d-tiles/README.md).
 
+### Shaders
+
+Shaders live in their own `.glsl` files, in a `shaders` folder beside the code that uses them. Edit those files, never the `.ts` module generated beside each one, then generate the modules:
+
+```bash
+npm run shaders
+```
+
+While an example runs, `npm run shaders:watch` regenerates them on every change, and the example reloads. `npm run check` fails when a module is out of date. See [packages/tools](packages/tools/README.md). VS Code recommends a GLSL extension for this repository.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

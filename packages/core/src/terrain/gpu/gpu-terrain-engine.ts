@@ -26,7 +26,8 @@ import { webMercatorTiling, type ITerrainTiling } from "../terrain-tiling";
 import { ElevationPages } from "./elevation-pages";
 import { GridShapes } from "./grid-shapes";
 import { InstancedGrid, INSTANCE_ATTRIBUTES, refinedGridTopology, type InstanceAttribute } from "./instanced-grid";
-import { INSTANCED_GRID_FRAGMENT, INSTANCED_GRID_VERTEX } from "./instanced-grid-shaders";
+import { instancedGridPixelShader } from "./shaders/instancedGrid.fragment";
+import { instancedGridVertexShader } from "./shaders/instancedGrid.vertex";
 import { PickSurface } from "./pick-surface";
 
 export interface IGpuTerrainEngineOptions {
@@ -137,7 +138,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
         this.material = new ShaderMaterial(
             "gpu-terrain",
             this.scene,
-            { vertexSource: INSTANCED_GRID_VERTEX, fragmentSource: INSTANCED_GRID_FRAGMENT },
+            { vertexSource: instancedGridVertexShader.shader, fragmentSource: instancedGridPixelShader.shader },
             {
                 attributes: ["position", ...INSTANCE_ATTRIBUTES],
                 uniforms: [
