@@ -44,6 +44,7 @@ import {
     CUBE_TILE_TOPOLOGY,
     CubeTileSurface,
     ReferenceSurface,
+    cubeTileOfDirection,
     planetocentricDirection,
 } from "@spacexr/tiles";
 import {
@@ -51,12 +52,19 @@ import {
     DemPyramid,
     WorkerDemDecoder,
     createMapzenTerrariumSource,
+    cubeDemPyramid,
     webDemTileLoader,
     type IDemWorkerEndpoint,
 } from "@spacexr/dem";
 
 import DemDecoderWorker from "./dem-decoder.worker?worker";
 import { createMoonObjects } from "./moon-objects";
+import {
+    datasetHeightAt,
+    datasetImageryLoader,
+    loadMoonDataset,
+    terrainSubtrees,
+} from "./moon-dataset";
 import { debugImageryTile } from "./debug-imagery";
 import {
     SYNTHETIC_MOON_RADIUS,
@@ -74,6 +82,21 @@ function requiredElement<TElement extends HTMLElement>(
     if (!(element instanceof constructor))
         throw new Error(`Required element #${id} is missing.`);
     return element;
+}
+
+/** PNG and elevation decoding take about 60 ms per tile; workers keep it off the render loop. */
+function createDemDecoder(): WorkerDemDecoder {
+    return new WorkerDemDecoder(
+        Array.from(
+            {
+                length: Math.max(
+                    1,
+                    Math.min(4, (navigator.hardwareConcurrency || 2) - 1),
+                ),
+            },
+            () => new DemDecoderWorker() as unknown as IDemWorkerEndpoint,
+        ),
+    );
 }
 
 async function run(): Promise<void> {
@@ -96,17 +119,29 @@ async function run(): Promise<void> {
     );
     const scene = createGeospatialScene(engine);
 
-    // `body=moon` shows a whole synthetic Moon on the cube index, poles included, with the GPU engine.
+    // `body=moon` shows a whole Moon on the cube index, poles included, with the GPU engine: synthetic, or
+    // from the tile service named by `dataset`.
     const moon = parameters.get("body") === "moon";
+    const datasetService = parameters.get("dataset");
+    const moonDataset =
+        moon && datasetService
+            ? await loadMoonDataset(datasetService)
+            : undefined;
+    const moonRadius = moonDataset?.radius ?? SYNTHETIC_MOON_RADIUS;
     const geodeticSystem = moon
-        ? new GeodeticSystem(Ellipsoid.sphere("Moon", SYNTHETIC_MOON_RADIUS))
+        ? new GeodeticSystem(Ellipsoid.sphere("Moon", moonRadius))
         : GeodeticSystem.WGS84;
     const moonSurface = moon
-        ? new CubeTileSurface(ReferenceSurface.sphere(SYNTHETIC_MOON_RADIUS))
+        ? (moonDataset?.elevation.surface ??
+          new CubeTileSurface(ReferenceSurface.sphere(moonRadius)))
         : undefined;
-    // Deepest terrain tile of the Moon, and deepest level its synthetic DEM computes before interpolating.
-    const moonMaxLOD = 14;
-    const moonDemMaxLOD = 10;
+    // Deepest level of the DEM of the Moon everywhere. A terrain tile has 16 cells per side and a DEM tile 256: the terrain
+    // reaches the samples of the DEM four levels below it, whose tiles read sub-areas of the DEM tile, not interpolated tiles.
+    const moonDemMaxLOD = moonDataset?.elevation.dataset.maxLOD ?? 10;
+    const moonMaxLOD = moonDemMaxLOD + 4;
+    // Deepest level of its DEM anywhere, such as the south polar cap of a dataset.
+    const moonDemDeepestLOD =
+        moonDataset?.elevation.deepestLOD ?? moonDemMaxLOD;
     const monitoringEnabled = parameters.get("monitor") !== "0";
     const solidRendering = parameters.get("solid") === "1";
     const elevationEnabled = parameters.get("elevation") !== "0";
@@ -140,8 +175,10 @@ async function run(): Promise<void> {
         throw new RangeError(
             "The interpolation parameter must be cubic, bilinear, linear or nearest.",
         );
-    // `debug` draws pages locally; any other name loads src/local/<name>.imagery.ts, kept out of the repository.
-    const imagery = parameters.get("imagery") ?? "debug";
+    // `debug` draws pages locally, `dataset` reads the tile service of the Moon; any other name loads
+    // src/local/<name>.imagery.ts, kept out of the repository.
+    const imagery =
+        parameters.get("imagery") ?? (moonDataset ? "dataset" : "debug");
     // Imagery drapes shaded grids only; wireframe grids keep their level colours.
     const imageryEnabled = solidRendering && imagery !== "none";
     const verticalScaleInput = requiredElement(
@@ -159,6 +196,11 @@ async function run(): Promise<void> {
         throw new RangeError("The scale parameter must be non-negative.");
     // Everything in the scene reads this one scale; the slider only changes it.
     const verticalScale = new VerticalScale(initialScale);
+    // On a sphere with terrain below its reference surface, the horizon reads the heights of each tile.
+    const spatialOptions = {
+        geodeticSystem,
+        ...(moon ? { horizon: "tile-heights" as const } : {}),
+    };
     const dem =
         elevationEnabled && !moon ? createMapzenTerrariumSource() : undefined;
     const childHeightRanges = new ChildHeightRanges();
@@ -187,11 +229,34 @@ async function run(): Promise<void> {
               maxLOD: moonMaxLOD,
               // The error of a terrain tile follows the cells of its grid, not the samples of its DEM.
               tileSize: 16,
+              ...(moonDataset
+                  ? { subtrees: terrainSubtrees(moonDataset.elevation, 4) }
+                  : {}),
           })
         : createGeodesicGridSource(preparedHeights, { subtrees });
     if (dem)
         requiredElement("attribution", HTMLElement).textContent =
             dem.source.attribution ?? "";
+
+    const moonPyramid =
+        moon && elevationEnabled
+            ? moonDataset
+                ? cubeDemPyramid(moonDataset.elevation, createDemDecoder(), {
+                      cacheEntries: 512,
+                      childHeightRanges,
+                  })
+                : new DemPyramid({
+                      registration: "point",
+                      load: loadSyntheticMoonTile,
+                      maxLOD: moonDemMaxLOD,
+                      cacheEntries: 512,
+                      childHeightRanges,
+                  })
+            : undefined;
+    const moonHeight =
+        moonDataset && moonPyramid
+            ? datasetHeightAt(moonPyramid, moonDemDeepestLOD)
+            : syntheticMoonHeight;
 
     // Mont Blanc summit, 4808 m.
     const montBlanc = {
@@ -227,7 +292,7 @@ async function run(): Promise<void> {
               radiusMin: 500,
               ...(elevationEnabled
                   ? {
-                        heightAt: syntheticMoonHeight,
+                        heightAt: moonHeight,
                         verticalScale,
                     }
                   : {}),
@@ -283,7 +348,15 @@ async function run(): Promise<void> {
                 registration: moon ? ("point" as const) : ("area" as const),
                 attribution: "",
             }
-          : await loadLocalImagery(imagery);
+          : imagery === "dataset" && moonDataset
+            ? {
+                  load: datasetImageryLoader(moonDataset.imagery),
+                  maxLOD: moonDataset.imagery.deepestLOD,
+                  // Tiles of the cube hold their shared edges.
+                  registration: "point" as const,
+                  attribution: "",
+              }
+            : await loadLocalImagery(imagery);
     const imageryMetrics = new WebMercatorTileMetrics({
         minLOD: 3,
         maxLOD: imagerySource?.maxLOD ?? 20,
@@ -343,7 +416,7 @@ async function run(): Promise<void> {
                 },
                 subtrees: new DenseImplicitSubtreeLoader(),
                 implicitTiles: imagerySource.resolver,
-                spatial: new EcefSpatialMetric({ geodeticSystem }),
+                spatial: new EcefSpatialMetric(spatialOptions),
                 activation: imageryAdapter,
                 presentation: imageryAdapter,
             },
@@ -354,48 +427,22 @@ async function run(): Promise<void> {
             maxConcurrentLoads: 12,
             ...(moon ? { verticalScale } : {}),
             // Each imagery page holds a texture array layer of 257 x 257 texels: 512 pages bound the GPU memory.
-            cache: { maxContentEntries: 512 },
+            cache: {
+                maxContentEntries: 512,
+                ...(moon ? { workingSetFactor: 3 } : {}),
+            },
         });
     }
 
     const elevation: IGridElevationOptions | undefined = moon
-        ? elevationEnabled
-            ? {
-                  pyramid: new DemPyramid({
-                      registration: "point",
-                      load: loadSyntheticMoonTile,
-                      maxLOD: moonDemMaxLOD,
-                      cacheEntries: 512,
-                      generation: { maxLOD: moonMaxLOD },
-                      childHeightRanges,
-                  }),
-                  verticalScale,
-              }
+        ? moonPyramid
+            ? { pyramid: moonPyramid, verticalScale }
             : undefined
         : dem
           ? {
                 pyramid: new DemPyramid({
                     registration: dem.source.registration,
-                    load: webDemTileLoader(
-                        dem,
-                        // PNG and elevation decoding take about 60 ms per tile; workers keep it off the render loop.
-                        new WorkerDemDecoder(
-                            Array.from(
-                                {
-                                    length: Math.max(
-                                        1,
-                                        Math.min(
-                                            4,
-                                            (navigator.hardwareConcurrency ||
-                                                2) - 1,
-                                        ),
-                                    ),
-                                },
-                                () =>
-                                    new DemDecoderWorker() as unknown as IDemWorkerEndpoint,
-                            ),
-                        ),
-                    ),
+                    load: webDemTileLoader(dem, createDemDecoder()),
                     maxLOD: dem.source.metrics.maxLOD,
                     // Room for the DEM tiles retained by the displayed cut, and for the tiles loading around it.
                     cacheEntries: 512,
@@ -450,7 +497,7 @@ async function run(): Promise<void> {
         tilesets: { load: async () => ({ tileset: source.tileset }) },
         subtrees: new DenseImplicitSubtreeLoader(),
         implicitTiles: source.resolver,
-        spatial: new EcefSpatialMetric({ geodeticSystem }),
+        spatial: new EcefSpatialMetric(spatialOptions),
         activation: terrain,
         presentation: terrain,
     };
@@ -472,7 +519,10 @@ async function run(): Promise<void> {
                   : { wrapX: true },
         ...(moon ? { verticalScale } : {}),
         // Terrain tiles of the view and around it; their DEM tiles are cached by the DEM pyramid.
-        cache: { maxContentEntries: 1024 },
+        cache: {
+            maxContentEntries: 1024,
+            ...(moon ? { workingSetFactor: 3 } : {}),
+        },
     });
 
     const imageryRuntime = imageryPages
@@ -480,12 +530,26 @@ async function run(): Promise<void> {
         : undefined;
 
     // `objects=1` places a hierarchy of glTF objects on the Moon, from a 3D Tiles tileset with its own runtime.
+    const objectsDirection = planetocentricDirection(
+        target.latitude,
+        target.longitude,
+    );
+    // Objects stand on the heights of a dataset once its tile below them is loaded.
+    if (moonDataset && moonPyramid && parameters.get("objects") === "1")
+        await moonPyramid.tileHeights(
+            cubeTileOfDirection(objectsDirection, moonDemDeepestLOD),
+        );
     const objectsScene =
         moonSurface && parameters.get("objects") === "1"
             ? createMoonObjects(
                   moonSurface.reference,
-                  planetocentricDirection(target.latitude, target.longitude),
-                  elevationEnabled ? syntheticMoonHeight : () => 0,
+                  objectsDirection,
+                  elevationEnabled
+                      ? (direction) => {
+                            const height = moonHeight(direction);
+                            return Number.isNaN(height) ? 0 : height;
+                        }
+                      : () => 0,
               )
             : undefined;
     const objectPlacement = moonSurface
@@ -527,7 +591,7 @@ async function run(): Promise<void> {
                           load: async () => ({ tileset: objectsScene.tileset }),
                       },
                       spatial: new EcefSpatialMetric({
-                          geodeticSystem,
+                          ...spatialOptions,
                           vertical: objectPlacement,
                       }),
                       activation: objectContent,
@@ -553,8 +617,11 @@ async function run(): Promise<void> {
         console.error("3D Tiles pipeline error", event.error);
     });
 
+    // On the Moon, tiles beyond the edges of the image are ready when the camera turns. Web Mercator selects as before.
+    const frustum = moon ? { frustumMargin: 0.25 } : {};
     const driver = new BabylonRuntimeDriver(runtime, scene, {
         camera,
+        ...frustum,
         onError: (error) => {
             status.textContent = "Runtime frame failed";
             console.error("3D Tiles pipeline frame failed", error);
@@ -563,6 +630,7 @@ async function run(): Promise<void> {
     const imageryDriver = imageryRuntime
         ? new BabylonRuntimeDriver(imageryRuntime, scene, {
               camera,
+              ...frustum,
               onError: (error) =>
                   console.error("Imagery runtime frame failed", error),
           })
@@ -570,6 +638,7 @@ async function run(): Promise<void> {
     const objectDriver = objectRuntime
         ? new BabylonRuntimeDriver(objectRuntime, scene, {
               camera,
+              ...frustum,
               onError: (error) =>
                   console.error("Objects runtime frame failed", error),
           })
@@ -582,7 +651,7 @@ async function run(): Promise<void> {
     ]);
     monitor.setStartupMilliseconds(performance.now() - startupStartedAt);
     const coverage = moon
-        ? `Synthetic Moon on the cube index, 6 faces, LOD 0..${moonMaxLOD}`
+        ? `${moonDataset ? `${moonDataset.elevation.dataset.body} dataset, DEM LOD 0..${moonDemDeepestLOD},` : "Synthetic Moon"} on the cube index, 6 faces, LOD 0..${moonDemDeepestLOD + moonMaxLOD - moonDemMaxLOD}`
         : `Global WebMercator coverage, ${source.tileset.root.children?.length ?? 0} roots, LOD ${TILE_METRICS.minLOD}..${TILE_METRICS.maxLOD}`;
     status.textContent = `${coverage} | ${renderer === "webgpu" ? "GLSL converted for WebGPU" : "WebGL"}`;
 
@@ -602,6 +671,9 @@ async function run(): Promise<void> {
         objectRuntime,
         objectsScene,
         syntheticMoonHeight,
+        moonHeight,
+        moonDataset,
+        moonPyramid,
         moonReference: moonSurface?.reference,
         scene,
     };

@@ -31,6 +31,10 @@ varying vec4 vPage;
 varying vec3 vUp;
 varying vec3 vEast;
 varying vec3 vSouth;
+varying vec4 vEdgeN;
+varying vec4 vEdgeE;
+varying vec4 vEdgeS;
+varying vec4 vEdgeW;
 #else
 varying vec3 vNormal;
 #endif
@@ -132,6 +136,10 @@ vEast = surfaceTangent(h - ivec2(2, 0), h + ivec2(2, 0), surfaceNormal);
 vSouth = surfaceTangent(h - ivec2(0, 2), h + ivec2(0, 2), surfaceNormal);
 vTile = position.xy;
 vPage = instElevation;
+vEdgeN = instEdgeN;
+vEdgeE = instEdgeE;
+vEdgeS = instEdgeS;
+vEdgeW = instEdgeW;
 #else
 vec3 eastward = positionAt(h + ivec2(2, 0)) - positionAt(h - ivec2(2, 0));
 vec3 northward = positionAt(h - ivec2(0, 2)) - positionAt(h + ivec2(0, 2));

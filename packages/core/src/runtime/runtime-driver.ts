@@ -4,7 +4,7 @@ import type { Scene } from "@babylonjs/core/scene.js";
 import { CameraChangeFlags, type IEcefCameraFrame } from "@spacexr/3d-tiles-runtime";
 
 import { BabylonCameraChangeTracker } from "../camera/camera-change-tracker";
-import { createEcefCameraFrame } from "../spatial/camera-frame";
+import { createEcefCameraFrame, type IEcefCameraFrameOptions } from "../spatial/camera-frame";
 
 /** Part of `TileRuntime` driven frame by frame. */
 export interface IFrameDrivenRuntime {
@@ -19,6 +19,8 @@ export interface IBabylonRuntimeDriverOptions {
     camera?: Camera;
     /** Receives failures of frames processed after start. Defaults to `console.error`. */
     onError?: (error: unknown) => void;
+    /** Widens the frustum tiles are selected in; see {@link IEcefCameraFrameOptions.frustumMargin}. Defaults to 0. */
+    frustumMargin?: number;
 }
 
 /**
@@ -34,6 +36,7 @@ export class BabylonRuntimeDriver {
     private framePending = false;
     private disposed = false;
     private readonly onError: (error: unknown) => void;
+    private readonly frameOptions: IEcefCameraFrameOptions;
 
     public constructor(
         private readonly runtime: IFrameDrivenRuntime,
@@ -41,6 +44,7 @@ export class BabylonRuntimeDriver {
         options: IBabylonRuntimeDriverOptions = {},
     ) {
         this.camera = options.camera;
+        this.frameOptions = options.frustumMargin === undefined ? {} : { frustumMargin: options.frustumMargin };
         this.onError = options.onError ?? ((error) => console.error("3D Tiles runtime frame failed", error));
     }
 
@@ -92,6 +96,6 @@ export class BabylonRuntimeDriver {
     }
 
     private cameraFrame(): IEcefCameraFrame {
-        return createEcefCameraFrame(this.camera!, this.scene.getEngine());
+        return createEcefCameraFrame(this.camera!, this.scene.getEngine(), this.frameOptions);
     }
 }
