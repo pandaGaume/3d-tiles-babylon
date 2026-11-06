@@ -15,7 +15,8 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { createCubeGridSource, cubeTiling, metadataTileAddress, webMercatorTiling } from "../src";
-import { INSTANCED_GRID_FRAGMENT, INSTANCED_GRID_VERTEX } from "../src/terrain/gpu/instanced-grid-shaders";
+import { instancedGridPixelShader } from "../src/terrain/gpu/shaders/instancedGrid.fragment";
+import { instancedGridVertexShader } from "../src/terrain/gpu/shaders/instancedGrid.vertex";
 
 const SIZE = 17;
 const MOON = new CubeTileSurface(ReferenceSurface.sphere(1737400));
@@ -79,9 +80,9 @@ describe("cube terrain", () => {
         expect(turnedTileCoordinates(0.25, 0.5, 1)).toEqual([0.5, 0.25]);
         expect(turnedTileCoordinates(0.25, 0.5, 2)).toEqual([0.75, 0.5]);
         expect(turnedTileCoordinates(0.25, 0.5, 3)).toEqual([0.5, 0.75]);
-        expect(INSTANCED_GRID_VERTEX).toContain("if (turns == 1) turned = vec2(1.0 - uv.y, uv.x);");
-        expect(INSTANCED_GRID_VERTEX).toContain("else if (turns == 2) turned = vec2(1.0 - uv.x, 1.0 - uv.y);");
-        expect(INSTANCED_GRID_VERTEX).toContain("else if (turns == 3) turned = vec2(uv.y, 1.0 - uv.x);");
+        expect(instancedGridVertexShader.shader).toContain("if (turns == 1) turned = vec2(1.0 - uv.y, uv.x);");
+        expect(instancedGridVertexShader.shader).toContain("else if (turns == 2) turned = vec2(1.0 - uv.x, 1.0 - uv.y);");
+        expect(instancedGridVertexShader.shader).toContain("else if (turns == 3) turned = vec2(uv.y, 1.0 - uv.x);");
     });
 
     it("gives both sides of a face edge the DEM of the coarser terrain tile", () => {
@@ -125,15 +126,15 @@ describe("shaders", () => {
             "use",
             "where",
         ];
-        for (const source of [INSTANCED_GRID_VERTEX, INSTANCED_GRID_FRAGMENT]) {
+        for (const source of [instancedGridVertexShader.shader, instancedGridPixelShader.shader]) {
             const declared = [...source.matchAll(/\b(?:int|float|bool|vec[234]|ivec[234])\s+([A-Za-z_]\w*)/g)].map((match) => match[1]);
             expect(declared.filter((name) => reserved.includes(name!))).toEqual([]);
         }
     });
 
     it("only declares the fragment normal inputs with radial heights", () => {
-        expect(INSTANCED_GRID_FRAGMENT).toContain("heightGradient(vPage, vTile)");
-        expect(INSTANCED_GRID_FRAGMENT).toMatch(/#ifdef RADIAL_HEIGHTS[\s\S]*#else\s+vec3 normal = normalize\(vNormal\);/);
+        expect(instancedGridPixelShader.shader).toContain("heightGradient(vPage, vTile)");
+        expect(instancedGridPixelShader.shader).toMatch(/#ifdef RADIAL_HEIGHTS[\s\S]*#else\s+vec3 normal = normalize\(vNormal\);/);
     });
 });
 

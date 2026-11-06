@@ -42,6 +42,10 @@
         }
     },
     "scripts": {
+        "shaders": "tsx ../tools/src/cli.ts src",
+        "shaders:check": "tsx ../tools/src/cli.ts src --check",
+        "shaders:watch": "tsx ../tools/src/cli.ts src --watch",
+        "prebuild": "npm run shaders",
         "build": "tsup",
         "clean": "rimraf dist coverage",
         "watch": "tsup --watch",
@@ -85,6 +89,7 @@
         "rimraf": "~6.1.3",
         "tslib": "^2.9.1",
         "tsup": "^8.5.1",
+        "tsx": "^4.23.15",
         "typescript": "^5.4.0",
         "vitest": "4.1.12"
     }

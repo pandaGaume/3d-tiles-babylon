@@ -17,6 +17,8 @@
         "esbuild": "0.28.2"
     },
     "scripts": {
+        "shaders": "npm run shaders --workspace @spacexr/3d-tiles-babylon",
+        "shaders:watch": "npm run shaders:watch --workspace @spacexr/3d-tiles-babylon",
         "build": "npm run build --workspaces --if-present",
         "clean": "npm run clean --workspaces --if-present",
         "typecheck": "npm run typecheck --workspaces --if-present",

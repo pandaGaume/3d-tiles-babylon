@@ -17,3 +17,5 @@
 *.sln    text eol=crlf
 *.csproj text eol=crlf
 
+# Generated from the shader file beside them.
+packages/core/src/**/shaders/**/*.ts linguist-generated=true

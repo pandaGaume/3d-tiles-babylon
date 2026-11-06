@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import { webMercatorTiling } from "../src";
 import { tileCenterEcef, tileCenterLongitude, webMercatorLatitude } from "../src/terrain/gpu/grid-shapes";
-import { INSTANCED_GRID_FRAGMENT, INSTANCED_GRID_VERTEX } from "../src/terrain/gpu/instanced-grid-shaders";
+import { instancedGridPixelShader } from "../src/terrain/gpu/shaders/instancedGrid.fragment";
+import { instancedGridVertexShader } from "../src/terrain/gpu/shaders/instancedGrid.vertex";
 
 /** A shader as compiled without a define: the `#ifdef` branches removed, the `#else` branches kept. */
 function withoutDefine(source: string, define: string): string {
@@ -21,7 +22,7 @@ function withoutDefine(source: string, define: string): string {
 
 describe("the Web Mercator path", () => {
     it("holds nothing of the cube in its shaders", () => {
-        for (const shader of [INSTANCED_GRID_VERTEX, INSTANCED_GRID_FRAGMENT]) {
+        for (const shader of [instancedGridVertexShader.shader, instancedGridPixelShader.shader]) {
             const mercator = withoutDefine(shader, "RADIAL_HEIGHTS");
             for (const token of ["turns", "floor(reference", "inverseRadiiSquared", "vUp", "vEast", "shapePosition", "heightGradient"]) {
                 expect(mercator).not.toContain(token);

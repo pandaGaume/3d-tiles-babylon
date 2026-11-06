@@ -9,6 +9,11 @@ import type { SubMesh } from "@babylonjs/core/Meshes/subMesh.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 
 import type { TextureArrayPool } from "../../raster/texture-array-pool";
+import { rasterDrapeFragmentDefinitions } from "./shaders/snippets/rasterDrapeFragmentDefinitions";
+import { rasterDrapeFragmentUpdateDiffuse } from "./shaders/snippets/rasterDrapeFragmentUpdateDiffuse";
+import { rasterDrapeUniforms } from "./shaders/snippets/rasterDrapeUniforms";
+import { rasterDrapeVertexDefinitions } from "./shaders/snippets/rasterDrapeVertexDefinitions";
+import { rasterDrapeVertexMainEnd } from "./shaders/snippets/rasterDrapeVertexMainEnd";
 
 /** Binding of one mesh: its drape depth and the layer of its cell table, `-1` without table. */
 export interface IMeshRasterDrape {
@@ -88,9 +93,7 @@ export class RasterDrapeMaterialPlugin extends MaterialPluginBase {
     public override getUniforms(): { ubo: { name: string; size: number; type: string }[]; fragment: string } {
         return {
             ubo: [{ name: "drapeInfo", size: 4, type: "vec4" }],
-            fragment: `#ifdef RASTERDRAPE
-uniform vec4 drapeInfo;
-#endif`,
+            fragment: rasterDrapeUniforms.shader,
         };
     }
 
@@ -106,44 +109,13 @@ uniform vec4 drapeInfo;
     public override getCustomCode(shaderType: string): Record<string, string> | null {
         if (shaderType === "vertex")
             return {
-                CUSTOM_VERTEX_DEFINITIONS: `#if defined(RASTERDRAPE) && defined(UV1)
-varying vec2 vDrapeUV;
-#endif`,
-                CUSTOM_VERTEX_MAIN_END: `#if defined(RASTERDRAPE) && defined(UV1)
-vDrapeUV = uv;
-#endif`,
+                CUSTOM_VERTEX_DEFINITIONS: rasterDrapeVertexDefinitions.shader,
+                CUSTOM_VERTEX_MAIN_END: rasterDrapeVertexMainEnd.shader,
             };
         if (shaderType === "fragment")
             return {
-                CUSTOM_FRAGMENT_DEFINITIONS: `#if defined(RASTERDRAPE) && defined(UV1)
-precision highp sampler2DArray;
-uniform highp sampler2DArray drapePages;
-uniform highp sampler2DArray drapeTables;
-varying vec2 vDrapeUV;
-
-vec4 rasterDrapeColor(vec2 tile) {
-    // drapeInfo: x = depth, y = table layer.
-    if (drapeInfo.y < 0.0) return vec4(0.0);
-    float cells = exp2(drapeInfo.x);
-    vec2 cell = clamp(floor(tile * cells), 0.0, cells - 1.0);
-    vec4 entry = texelFetch(drapeTables, ivec3(ivec2(cell), int(drapeInfo.y)), 0);
-    if (entry.x < 0.0) return vec4(0.0);
-    // Point registration: the first and last texels lie on the page edges.
-    float texels = float(textureSize(drapePages, 0).x);
-    vec2 page = entry.yz + (tile * cells - cell) * entry.w;
-    vec2 coordinates = (page * (texels - 1.0) + 0.5) / texels;
-    // Pages have no mipmaps: an explicit level keeps the same colour and, unlike an implicit one, is allowed in the
-    // non-uniform control flow of WGSL once Babylon converts this shader for WebGPU.
-    return vec4(textureLod(drapePages, vec3(coordinates, entry.x), 0.0).rgb, 1.0);
-}
-#endif`,
-                CUSTOM_FRAGMENT_UPDATE_DIFFUSE: `#if defined(RASTERDRAPE) && defined(UV1)
-vec4 drapeColor = rasterDrapeColor(vec2(vDrapeUV.x, 1.0 - vDrapeUV.y));
-if (drapeColor.a > 0.0) {
-    baseColor.rgb = drapeColor.rgb;
-    diffuseColor = vec3(1.0);
-}
-#endif`,
+                CUSTOM_FRAGMENT_DEFINITIONS: rasterDrapeFragmentDefinitions.shader,
+                CUSTOM_FRAGMENT_UPDATE_DIFFUSE: rasterDrapeFragmentUpdateDiffuse.shader,
             };
         return null;
     }
