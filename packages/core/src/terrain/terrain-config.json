@@ -5,6 +5,7 @@
     "selection": {
         "screenSpaceError": 10,
         "hysteresis": 0.2,
+        "frustumMargin": 0.25,
         "coarseningDelayMilliseconds": 300,
         "maxConcurrentLoads": 12,
         "contentCacheEntries": 1024

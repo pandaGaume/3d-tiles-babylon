@@ -13,6 +13,8 @@ export interface ITerrainConfig {
         screenSpaceError: number;
         /** A refined tile coarsens once its error drops below `1 - hysteresis` times the threshold. */
         hysteresis: number;
+        /** Periphery of the view whose terrain tiles load without being drawn, as a fraction of the half extent of the view. */
+        frustumMargin: number;
         /** Time a refined tile waits before coarsening. */
         coarseningDelayMilliseconds: number;
         maxConcurrentLoads: number;

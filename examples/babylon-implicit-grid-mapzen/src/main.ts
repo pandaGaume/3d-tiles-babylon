@@ -519,7 +519,11 @@ async function run(): Promise<void> {
 
     const driver = new BabylonRuntimeDriver(runtime, scene, {
         camera,
-        // Mercator selects the real view and preloads replacement fronts.
+        // Mercator selects the real view, and loads its periphery without drawing it.
+        frustumMargin: Number(
+            parameters.get("frustumMargin") ??
+                TERRAIN_CONFIG.selection.frustumMargin,
+        ),
         manual: true,
         onError: (error) => {
             status.textContent = "Runtime frame failed";
