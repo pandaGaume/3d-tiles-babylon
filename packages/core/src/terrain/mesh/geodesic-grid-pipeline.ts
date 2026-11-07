@@ -20,19 +20,14 @@ import {
     type MetadataHandle,
     VerticalScale,
 } from "@spacexr/3d-tiles-runtime";
-import { GeodeticSystem } from "@spacexr/geodesy";
 import { JunctionGridTopologyCache, type IGridTopology, SAME_EDGE_LODS, edgeLodsKey, type GridEdgeLods } from "@spacexr/grid";
-import { selectSurfaceLevels, webMercatorSurfaceNormal, type DemPyramid, type SurfaceLevelPolicy } from "@spacexr/dem";
+import { selectSurfaceLevels, type DemPyramid, type SurfaceLevelPolicy } from "@spacexr/dem";
 import { DisplayedTiles, type JunctionPolicy } from "../displayed-tiles";
-import { regionCenter, regionWithHeights, tileIdentity, tileRegion } from "../terrain-tile";
-import {
-    composeElevatedPositions,
-    type IElevatedGridGeometry,
-    projectElevatedGrid,
-    projectGridTopologyToEllipsoid,
-} from "./geodesic-grid-geometry";
+import { TERRAIN_CONFIG } from "../terrain-config";
+import { regionWithHeights, tileIdentity, tileRegion } from "../terrain-tile";
+import { webMercatorTiling, type ITerrainTiling } from "../terrain-tiling";
+import { composeElevatedPositions, type IElevatedGridGeometry, projectElevatedGrid } from "./geodesic-grid-geometry";
 
-const GRID_SUBDIVISIONS = 16;
 const LOD_COLORS = ["#2f80ed", "#00c2ff", "#12b886", "#ffd43b", "#ff922b", "#fa5252", "#cc5de8", "#845ef7"] as const;
 
 export interface IBabylonGeodesicGridHandle {
@@ -46,7 +41,6 @@ export interface IBabylonGeodesicGridHandle {
     estimatedGpuBytes: number;
     /** Present when the grid carries DEM heights. */
     elevated: IElevatedGridGeometry | undefined;
-    region: readonly number[];
     /** Unscaled heights of the tile, kept to rebuild the grid when its neighbours change. */
     heightAt: HeightSampler | undefined;
     /** Neighbour levels the current grid connects to. */
@@ -78,10 +72,12 @@ export interface IBabylonGeodesicGridPipelineOptions {
     edgeHeights?: EdgeHeightPolicy;
     /** Drapes imagery pages on shaded grids. Wireframe grids keep their level colours. */
     drape?: MeshRasterDrape;
+    /** How tiles lie on the body. Defaults to Web Mercator on WGS84. */
+    tiling?: ITerrainTiling;
     /**
      * Main-thread time per frame for the grids rebuilt by
      * {@link BabylonGeodesicGridPipeline.updateJunctions}, in milliseconds.
-     * The rest waits for the next frames. Defaults to 4.
+     * The rest waits for the next frames. Defaults to {@link TERRAIN_CONFIG}.
      */
     junctionBudgetMilliseconds?: number;
 }
@@ -112,8 +108,8 @@ function lodColor(lod: number): string {
 /**
  * Babylon implementation of the renderer-neutral runtime ports.
  *
- * The adapter shares only normalized grid topology. It computes unique ECEF
- * positions for each tile from its 3D Tiles region and the WGS84 ellipsoid.
+ * The adapter shares only normalized grid topology. It computes unique
+ * positions for each tile from the surface of its tiling.
  * A future shader implementation can reuse the same topology and move that
  * projection to the GPU, allowing instances without changing runtime ports.
  */
@@ -127,10 +123,8 @@ export class BabylonGeodesicGridPipeline
     private readonly materialsByLod = new Map<number, StandardMaterial>();
     private readonly topologies: JunctionGridTopologyCache;
     // The DEM tiles of the known cut stay in memory: edge heights and normals read them across tiles.
-    private readonly displayed = new DisplayedTiles({
-        onTrack: (address) => this.elevation?.pyramid.retain(address),
-        onForget: (address) => this.elevation?.pyramid.release(address),
-    });
+    private readonly displayed: DisplayedTiles;
+    private readonly tiling: ITerrainTiling;
     private readonly junctions: JunctionPolicy;
     private readonly edgeHeights: EdgeHeightPolicy;
     private readonly subdivisions: number;
@@ -150,9 +144,15 @@ export class BabylonGeodesicGridPipeline
         scene: Scene,
         labelLayer: HTMLElement,
         options: IBabylonGeodesicGridPipelineOptions = {},
-        subdivisions = GRID_SUBDIVISIONS,
+        subdivisions = TERRAIN_CONFIG.grid.cells,
     ) {
         this.scene = scene;
+        this.tiling = options.tiling ?? webMercatorTiling();
+        this.displayed = new DisplayedTiles({
+            topology: this.tiling.topology,
+            onTrack: (address) => this.elevation?.pyramid.retain(address),
+            onForget: (address) => this.elevation?.pyramid.release(address),
+        });
         this.labelLayer = labelLayer;
         this.wireframe = options.wireframe ?? true;
         this.elevation = options.elevation;
@@ -161,7 +161,7 @@ export class BabylonGeodesicGridPipeline
         this.stopVerticalScale = this.verticalScale.subscribe((scale) => this.applyVerticalScale(scale));
         this.junctions = options.junctions ?? "fine";
         this.edgeHeights = options.edgeHeights ?? "coarsest";
-        this.junctionBudgetMilliseconds = options.junctionBudgetMilliseconds ?? 4;
+        this.junctionBudgetMilliseconds = options.junctionBudgetMilliseconds ?? TERRAIN_CONFIG.mesh.junctionBudgetMilliseconds;
         this.subdivisions = subdivisions;
         this.topologies = new JunctionGridTopologyCache(subdivisions);
     }
@@ -173,7 +173,7 @@ export class BabylonGeodesicGridPipeline
                 continue;
             }
             try {
-                const heights = await this.elevation?.pyramid.tileHeights(tileIdentity(context));
+                const heights = await this.elevation?.pyramid.tileHeights(tileIdentity(context), context.signal);
                 if (context.signal.aborted) {
                     await context.readiness.cancelled(content.id);
                     continue;
@@ -191,9 +191,25 @@ export class BabylonGeodesicGridPipeline
                     // The tile starts at 0/0; its DEM gives the measured height range.
                     ...(heights && !Number.isNaN(heights.range.minimum) && !Number.isNaN(heights.range.maximum)
                         ? {
-                              tileBoundingVolume: () => ({
-                                  region: regionWithHeights(tileRegion(context), heights.range, this.verticalScale.value),
-                              }),
+                              tileBoundingVolume: () =>
+                                  this.tiling.boundingBox
+                                      ? {
+                                            box: this.tiling.boundingBox(
+                                                tileIdentity(context),
+                                                heights.range.minimum * this.verticalScale.value,
+                                                heights.range.maximum * this.verticalScale.value,
+                                            ) as never,
+                                        }
+                                      : { region: regionWithHeights(tileRegion(context), heights.range, this.verticalScale.value) },
+                              ...(this.tiling.boundingBox
+                                  ? {
+                                        tileHeightRange: () =>
+                                            [
+                                                heights.range.minimum * this.verticalScale.value,
+                                                heights.range.maximum * this.verticalScale.value,
+                                            ] as const,
+                                    }
+                                  : {}),
                           }
                         : {}),
                 });
@@ -256,6 +272,8 @@ export class BabylonGeodesicGridPipeline
     public updateJunctions(): void {
         if (!this.junctionsDirty) return;
         this.junctionsDirty = false;
+        // The budget counts the scan and the sort as well: with many tiles, they cost as much as a rebuild.
+        const start = performance.now();
         const topologyChanges: IJunctionRebuild[] = [];
         const heightChanges: IJunctionRebuild[] = [];
         const eye = this.scene.activeCamera?.globalPosition ?? Vector3.Zero();
@@ -274,7 +292,6 @@ export class BabylonGeodesicGridPipeline
         }
         const nearestFirst = (left: IJunctionRebuild, right: IJunctionRebuild): number => left.distance - right.distance;
         const rebuilds = [...topologyChanges.sort(nearestFirst), ...heightChanges.sort(nearestFirst)];
-        const start = performance.now();
         for (const [index, { handle, lods, edgeLevels }] of rebuilds.entries()) {
             if (index > 0 && performance.now() - start >= this.junctionBudgetMilliseconds) {
                 this.junctionsDirty = true;
@@ -379,8 +396,8 @@ export class BabylonGeodesicGridPipeline
         contentId: string,
         heightAt?: HeightSampler,
     ): IBabylonGeodesicGridHandle {
-        const region = tileRegion(context);
         const identity = tileIdentity(context);
+        const center = this.tiling.center(identity);
         const mesh = new Mesh(`geodesic-grid-${contentId}`, this.scene);
         mesh.material = this.materialForLod(identity.lod);
         mesh.isVisible = false;
@@ -395,20 +412,20 @@ export class BabylonGeodesicGridPipeline
         const handle: IBabylonGeodesicGridHandle = {
             mesh,
             identity,
-            center: regionCenter(region),
+            center: new Vector3(center.x, center.y, center.z),
             label,
             presented: false,
             metadataHandle: NO_METADATA,
             estimatedCpuBytes: 0,
             estimatedGpuBytes: 0,
             elevated: undefined,
-            region,
             heightAt,
             lods: SAME_EDGE_LODS,
             edgeLevels: "",
         };
-        // Neighbours are unknown until presentation; updateJunctions adapts the edges then.
+        // Neighbours are unknown until presentation; updateJunctions adapts the edges then, if they differ.
         this.applyGeometry(handle, SAME_EDGE_LODS);
+        handle.edgeLevels = heightAt ? this.edgeLevelsSignature(identity) : "";
         this.handles.add(handle);
         this.drape?.add(mesh, identity);
         this.createdHandleCount++;
@@ -423,10 +440,7 @@ export class BabylonGeodesicGridPipeline
      */
     private surfaceLevels(tile: ITileAddress, u: number, v: number): number[] {
         if (u !== 0 && u !== 1 && v !== 0 && v !== 1) return [tile.lod];
-        const count = 2 ** tile.lod;
-        const levels = this.displayed.touching((tile.x + u) / count, (tile.y + v) / count).map((displayed) => displayed.lod);
-        if (levels.length === 0) return [tile.lod];
-        return [...selectSurfaceLevels(levels, this.edgeHeights)];
+        return [...selectSurfaceLevels(this.displayed.levelsAt(tile, u, v), this.edgeHeights)];
     }
 
     /**
@@ -452,15 +466,20 @@ export class BabylonGeodesicGridPipeline
             const y = (row + v) / count;
             // One grid cell at the displayed level: the samples fall on the neighbouring vertices, so normals
             // describe the mesh surface rather than DEM detail the triangles cannot show.
-            const gradient = pyramid.surfaceGradient(x, y, this.surfaceLevels(handle.identity, u, v), this.subdivisions);
+            const gradient = pyramid.surfaceGradient(
+                x,
+                y,
+                this.surfaceLevels(handle.identity, u, v),
+                this.subdivisions,
+                handle.identity.face ?? 0,
+            );
             if (!gradient) continue;
             const up = {
                 x: elevated.up[vertex * 3]!,
                 y: elevated.up[vertex * 3 + 1]!,
                 z: elevated.up[vertex * 3 + 2]!,
             };
-            if (up.x === 0 && up.y === 0) continue;
-            const normal = webMercatorSurfaceNormal(gradient, up, this.verticalScale.value);
+            const normal = this.tiling.surfaceNormal(handle.identity, u, v, up, gradient, this.verticalScale.value);
             // Keep the orientation Babylon gives the mesh: its winding convention decides which side is lit.
             const meshSide =
                 normals[vertex * 3]! * normal.x + normals[vertex * 3 + 1]! * normal.y + normals[vertex * 3 + 2]! * normal.z < 0 ? -1 : 1;
@@ -471,18 +490,9 @@ export class BabylonGeodesicGridPipeline
         return normals;
     }
 
-    /**
-     * Known tiles touching the tile boundary, to detect when edge heights
-     * change: the levels at each edge vertex depend only on them. One pass over
-     * the known tiles, instead of sampling every edge vertex, which took most of
-     * the frames that presented tiles.
-     */
+    /** Levels around a tile, to detect when its edge heights change: the levels at each edge vertex depend only on them. */
     private edgeLevelsSignature(tile: ITileAddress): string {
-        return this.displayed
-            .touchingBoundary(tile)
-            .map((other) => `${other.lod}/${other.x}/${other.y}`)
-            .sort()
-            .join(";");
+        return this.displayed.boundarySignature(tile);
     }
 
     /** Builds the grid of a tile for the given neighbour levels and uploads it to its mesh. */
@@ -497,21 +507,19 @@ export class BabylonGeodesicGridPipeline
                       (column + u) / count,
                       (row + v) / count,
                       this.surfaceLevels(handle.identity, u, v),
+                      handle.identity.face ?? 0,
                   );
                   return Number.isNaN(height) ? ownHeight(u, v) : height;
               }
             : undefined;
-        // Rows follow Web Mercator so that vertices line up with DEM pixels.
-        const elevated = heightAt ? projectElevatedGrid(topology, handle.region, heightAt) : undefined;
-        const geometry = elevated
-            ? {
-                  positions: composeElevatedPositions(elevated, this.verticalScale.value),
-                  uvs: elevated.uvs,
-                  indices: elevated.indices,
-              }
-            : projectGridTopologyToEllipsoid(topology, handle.region, GeodeticSystem.WGS84, { latitudeInterpolation: "mercator" });
-        const normals: number[] = [];
-        if (elevated) normals.push(...this.surfaceNormals(handle, topology, elevated, geometry.positions));
+        const elevated = projectElevatedGrid(topology, handle.identity, this.tiling.surface, heightAt ?? (() => 0));
+        const geometry = {
+            positions: composeElevatedPositions(elevated, this.verticalScale.value),
+            uvs: elevated.uvs,
+            indices: elevated.indices,
+        };
+        let normals: number[] = [];
+        if (heightAt) normals = this.surfaceNormals(handle, topology, elevated, geometry.positions);
         else VertexData.ComputeNormals(geometry.positions, geometry.indices, normals);
 
         const vertexData = new VertexData();
@@ -519,9 +527,9 @@ export class BabylonGeodesicGridPipeline
         vertexData.uvs = geometry.uvs;
         vertexData.indices = geometry.indices;
         vertexData.normals = normals;
-        vertexData.applyToMesh(handle.mesh, elevated !== undefined);
+        vertexData.applyToMesh(handle.mesh, heightAt !== undefined);
 
-        handle.elevated = elevated;
+        handle.elevated = heightAt ? elevated : undefined;
         handle.lods = lods;
         handle.estimatedCpuBytes =
             (geometry.positions.length + normals.length) * Float64Array.BYTES_PER_ELEMENT +

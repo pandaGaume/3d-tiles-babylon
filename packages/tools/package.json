@@ -2,7 +2,7 @@
     "name": "@spacexr/3d-tiles-babylon-tools",
     "version": "0.0.0",
     "private": true,
-    "description": "Build tools of the 3D Tiles Babylon.js adaptation: compiles shader files into TypeScript modules.",
+    "description": "Build and measure tools of the 3D Tiles Babylon.js adaptation: compiles shader files into TypeScript modules, and flies camera paths over the terrain.",
     "type": "module",
     "license": "Apache-2.0",
     "author": "Guillaume Pelletier (SpaceXR)",
@@ -16,7 +16,8 @@
         "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
         "lint:fix": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --fix",
         "format": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
-        "format:fix": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\""
+        "format:fix": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+        "bench:terrain": "tsx src/terrain-bench/cli.ts"
     },
     "devDependencies": {
         "@types/node": "^20.11.0",

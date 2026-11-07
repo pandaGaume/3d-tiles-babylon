@@ -39,3 +39,18 @@ Called directly, the tool takes a folder:
 ```bash
 npx tsx packages/tools/src/cli.ts packages/core/src --check
 ```
+
+## Terrain bench
+
+Flies fixed camera paths in headless Chrome over the implicit grid example, on both terrain engines, and reports what each costs and breaks. It needs Node.js 22 and the example running, and the tile service for the Moon. Read the [terrain test log](https://github.com/pandaGaume/3d-tiles-core/blob/main/docs/terrain-test-log.md) of 3d-tiles-core before a new measurement, and add an entry after it.
+
+```bash
+npm run bench:terrain -- --dataset http://127.0.0.1:8793 --only "/gpu$" --label name --out file.json --compare reference.json
+```
+
+Each path runs twice, on a fresh page: once for performance, once for integrity.
+
+- **Performance:** frames per second, CPU of the terrain and of the render, GPU time, instances, draw calls, triangles, uploads, memory, requests to tile servers and time to load.
+- **Integrity:** holes, and the largest distance between vertices tiles share, in the view and anywhere, in motion and at rest once nothing is pending.
+
+`mont-blanc` paths reach public tile servers. A page is cut off from them after `--max-requests`, 5000 by default, and its path then fails: try a change that adds tiles on the Moon first. Mobile hardware and other GPUs are not covered. Run to run, compare large differences only.

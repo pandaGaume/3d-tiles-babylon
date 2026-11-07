@@ -18,11 +18,14 @@ import {
 import type { ChildHeightRanges } from "@spacexr/dem";
 import { parentTileAddress, type CubeTileSurface } from "@spacexr/tiles";
 
+import { TERRAIN_CONFIG } from "./terrain-config";
+
 export const TILE_METRICS = new WebMercatorTileMetrics({
-    minLOD: 3,
+    minLOD: TERRAIN_CONFIG.mercator.minLOD,
     // Mapzen Terrarium stops at level 15; deeper grids sample their level 15 ancestor.
-    maxLOD: 18,
-    tileSize: 256,
+    maxLOD: TERRAIN_CONFIG.mercator.maxLOD,
+    // The geometric error of a terrain tile is the ground size of the cells of its grid.
+    tileSize: TERRAIN_CONFIG.grid.cells,
 });
 
 const schema: IMetadataSchema = {
@@ -227,7 +230,7 @@ export function createGeodesicGridSource(prepared?: IPreparedHeights, options: I
 export interface ICubeGridSourceOptions {
     /** Deepest level of the grid. */
     maxLOD: number;
-    /** Cells per tile side, for the geometric error. Defaults to 256. */
+    /** Cells per tile side, for the geometric error. Defaults to the cells of the grid in {@link TERRAIN_CONFIG}. */
     tileSize?: number;
     /** Prefix of the data source identifiers. Defaults to `cube-grid`. */
     id?: string;
@@ -255,7 +258,7 @@ export function createCubeGridSource(
         refine: "REPLACE",
         tileMetadata: metadata,
         contentMetadata: metadata,
-        ...(options.tileSize === undefined ? {} : { tileSize: options.tileSize }),
+        tileSize: options.tileSize ?? TERRAIN_CONFIG.grid.cells,
         ...(options.subtrees ? { subtrees: options.subtrees } : {}),
         // Ranges are prepared one level ahead; deeper tiles, such as imagery tiles, use their deepest prepared ancestor.
         ...(prepared

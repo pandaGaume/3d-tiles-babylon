@@ -1,10 +1,14 @@
 import { NeighborLod, SAME_EDGE_LODS, gridEdgeLods, type GridEdgeLods } from "@spacexr/grid";
 import {
+    TILE_EDGE_NEIGHBORS,
     TileNeighbor,
     childTileAddresses,
+    flatTileTopology,
     parentTileAddress,
-    tileNeighborAddress,
+    tileAddressKey as key,
+    turnTileEdge,
     type ITileAddress,
+    type ITileTopology,
     type TileEdgeNeighbor,
 } from "@spacexr/tiles";
 
@@ -26,39 +30,20 @@ const CHILDREN_FACING: Readonly<Record<TileEdgeNeighbor, readonly [number, numbe
     [TileNeighbor.W]: [1, 3],
 };
 
-function key(address: ITileAddress): string {
-    return `${address.lod}/${address.x}/${address.y}`;
-}
-
 /** Whether `outer` contains `inner`, itself included. */
 function contains(outer: ITileAddress, inner: ITileAddress): boolean {
-    if (inner.lod < outer.lod) return false;
+    if ((outer.face ?? 0) !== (inner.face ?? 0) || inner.lod < outer.lod) return false;
     const scale = 2 ** (inner.lod - outer.lod);
     return Math.floor(inner.x / scale) === outer.x && Math.floor(inner.y / scale) === outer.y;
 }
 
-/**
- * Whether the closed extent of `other` touches the boundary of `tile`: they
- * intersect, and `other` does not lie strictly inside `tile`. Both are compared
- * in integer coordinates of the finer level; columns wrap around the antimeridian.
- */
-function touchesBoundary(tile: ITileAddress, other: ITileAddress): boolean {
-    const lod = Math.max(tile.lod, other.lod);
-    const tileSize = 2 ** (lod - tile.lod);
-    const otherSize = 2 ** (lod - other.lod);
-    const west = tile.x * tileSize;
-    const north = tile.y * tileSize;
-    const top = other.y * otherSize;
-    if (top > north + tileSize || top + otherSize < north) return false;
-    const columns = 2 ** lod;
-    for (const shift of [0, -columns, columns]) {
-        const left = other.x * otherSize + shift;
-        if (left > west + tileSize || left + otherSize < west) continue;
-        const inside = left > west && left + otherSize < west + tileSize && top > north && top + otherSize < north + tileSize;
-        if (!inside) return true;
-    }
-    return false;
-}
+/** Corners of a tile, with the edges they lie on. */
+const CORNERS: ReadonlyArray<readonly [TileNeighbor, TileEdgeNeighbor, TileEdgeNeighbor]> = [
+    [TileNeighbor.NW, TileNeighbor.N, TileNeighbor.W],
+    [TileNeighbor.NE, TileNeighbor.N, TileNeighbor.E],
+    [TileNeighbor.SE, TileNeighbor.S, TileNeighbor.E],
+    [TileNeighbor.SW, TileNeighbor.S, TileNeighbor.W],
+];
 
 /**
  * Tracks the last known cut of a quadtree to find the level displayed across each tile edge.
@@ -72,16 +57,20 @@ export interface IDisplayedTilesOptions {
     onTrack?: (address: ITileAddress) => void;
     /** Called when a tile leaves the known cut, displayed or ghost. */
     onForget?: (address: ITileAddress) => void;
+    /** How tiles connect, for example across the faces of the cube index. Defaults to one pyramid wrapping in longitude. */
+    topology?: ITileTopology;
 }
 
 export class DisplayedTiles {
-    public constructor(private readonly options: IDisplayedTilesOptions = {}) {}
+    private readonly topology: ITileTopology;
+
+    public constructor(private readonly options: IDisplayedTilesOptions = {}) {
+        this.topology = options.topology ?? flatTileTopology({ wrapX: true });
+    }
 
     private readonly counts = new Map<string, number>();
     private readonly addresses = new Map<string, ITileAddress>();
     private readonly ghosts = new Set<string>();
-    private readonly levelCounts = new Map<number, number>();
-    private sortedLevels: number[] = [];
 
     /** Records a presented tile; ghosts it overlaps leave. */
     public add(address: ITileAddress): void {
@@ -90,7 +79,6 @@ export class DisplayedTiles {
         const tracked = this.counts.has(tileKey);
         this.counts.set(tileKey, (this.counts.get(tileKey) ?? 0) + 1);
         this.addresses.set(tileKey, { ...address });
-        this.countLevel(address.lod, 1);
         if (!tracked) this.options.onTrack?.(address);
         this.removeOverlappingGhosts(address);
     }
@@ -119,7 +107,6 @@ export class DisplayedTiles {
             this.addresses.delete(tileKey);
             this.ghosts.delete(tileKey);
         }
-        this.countLevel(address.lod, -1);
         if (count <= 0) this.options.onForget?.(address);
     }
 
@@ -144,68 +131,61 @@ export class DisplayedTiles {
     }
 
     /**
-     * Displayed tiles whose closed extent contains a point, one per level, from
-     * the coarsest. The point is normalized over the pyramid: `x` eastward and
-     * `y` southward in `[0, 1]`. Columns wrap around the antimeridian.
+     * Levels of the known tiles touching a point of a tile, from the coarsest: the tile itself inside it, and on its
+     * boundary the tiles across the edges and the corner the point lies on, across cube faces included.
+     *
+     * @param u - Coordinate of the point in the tile, west to east.
+     * @param v - Coordinate of the point in the tile, north to south.
      */
-    public touching(x: number, y: number): ITileAddress[] {
-        const result: ITileAddress[] = [];
-        for (const lod of this.sortedLevels) {
-            const count = 2 ** lod;
-            const column = x * count;
-            const row = y * count;
-            // A point on a tile boundary touches the tiles on both sides.
-            const columns = Number.isInteger(column) ? [column - 1, column] : [Math.floor(column)];
-            const rows = Number.isInteger(row) ? [row - 1, row] : [Math.floor(row)];
-            const found = rows
-                .filter((candidate) => candidate >= 0 && candidate < count)
-                .flatMap((candidateRow) =>
-                    columns.map((candidate) => ({
-                        lod,
-                        x: ((candidate % count) + count) % count,
-                        y: candidateRow,
-                    })),
-                )
-                .find((address) => this.has(address));
-            if (found) result.push(found);
-        }
-        return result;
+    public levelsAt(address: ITileAddress, u: number, v: number): number[] {
+        if (u !== 0 && u !== 1 && v !== 0 && v !== 1) return [address.lod];
+        const levels = new Set([address.lod]);
+        const add = (lod: number | undefined): void => {
+            if (lod !== undefined) levels.add(lod);
+        };
+        const west = u === 0;
+        const east = u === 1;
+        const north = v === 0;
+        const south = v === 1;
+        if (north) add(this.lodAcross(address, TileNeighbor.N));
+        if (east) add(this.lodAcross(address, TileNeighbor.E));
+        if (south) add(this.lodAcross(address, TileNeighbor.S));
+        if (west) add(this.lodAcross(address, TileNeighbor.W));
+        const corner = CORNERS.find(
+            ([, row, column]) => (row === TileNeighbor.N ? north : south) && (column === TileNeighbor.W ? west : east),
+        );
+        if (corner) add(this.lodAcross(address, corner[0]));
+        return [...levels].sort((left, right) => left - right);
     }
 
     /**
-     * Known tiles, displayed or ghost, whose closed extent touches the boundary
-     * of a tile: the tile itself, its ancestors, the tiles across its edges and
-     * corners at any level, and its descendants along its edges. They are every
-     * tile {@link touching} can return for a point of the boundary, found in one
-     * pass over the known tiles. Columns wrap around the antimeridian.
+     * Levels around a tile, which decide the heights of its edges: they change only when one of these does.
      */
-    public touchingBoundary(address: ITileAddress): ITileAddress[] {
-        const result: ITileAddress[] = [];
-        for (const other of this.addresses.values()) if (touchesBoundary(address, other)) result.push(other);
-        return result;
-    }
-
-    private countLevel(lod: number, delta: number): void {
-        const count = (this.levelCounts.get(lod) ?? 0) + delta;
-        if (count > 0) this.levelCounts.set(lod, count);
-        else this.levelCounts.delete(lod);
-        this.sortedLevels = [...this.levelCounts.keys()].sort((left, right) => left - right);
+    public boundarySignature(address: ITileAddress): string {
+        const levels = TILE_EDGE_NEIGHBORS.map((edge) => this.lodAcross(address, edge));
+        for (const [corner] of CORNERS) levels.push(this.lodAcross(address, corner));
+        return levels.join(",");
     }
 
     /**
-     * Level of detail displayed across an edge: the neighbour itself, one of its
-     * ancestors, or its children facing the tile. Columns wrap around the
-     * antimeridian; `undefined` when nothing is displayed there.
+     * Level of detail displayed across an edge or a corner: the neighbour itself, one of its ancestors, or its children
+     * facing the tile. `undefined` when nothing is displayed there, or at a corner where only 3 tiles meet.
      */
-    public lodAcross(address: ITileAddress, edge: TileEdgeNeighbor): number | undefined {
-        const neighbor = tileNeighborAddress(address, edge, { wrapX: true });
+    public lodAcross(address: ITileAddress, position: TileNeighbor): number | undefined {
+        const neighbor = this.topology.neighbor(address, position);
         if (!neighbor) return undefined;
-        if (this.has(neighbor)) return neighbor.lod;
-        for (let ancestor = parentTileAddress(neighbor); ancestor; ancestor = parentTileAddress(ancestor)) {
+        if (this.has(neighbor.address)) return neighbor.address.lod;
+        for (let ancestor = parentTileAddress(neighbor.address); ancestor; ancestor = parentTileAddress(ancestor)) {
             if (this.has(ancestor)) return ancestor.lod;
         }
-        const children = childTileAddresses(neighbor);
-        return CHILDREN_FACING[edge].some((index) => this.has(children[index]!)) ? neighbor.lod + 1 : undefined;
+        const children = childTileAddresses(neighbor.address);
+        const facing = (edge: TileEdgeNeighbor): readonly number[] => CHILDREN_FACING[turnTileEdge(edge, neighbor.turns)];
+        const corner = CORNERS.find(([name]) => name === position);
+        // At a corner, only the child in both directions touches the tile.
+        const candidates = corner
+            ? facing(corner[1]).filter((index) => facing(corner[2]).includes(index))
+            : facing(position as TileEdgeNeighbor);
+        return candidates.some((index) => this.has(children[index]!)) ? neighbor.address.lod + 1 : undefined;
     }
 
     /**

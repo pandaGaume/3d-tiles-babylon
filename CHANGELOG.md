@@ -6,8 +6,21 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Changed
+
+- Terrain grids have 64 cells per side instead of 16, in both engines, and `terrain-config.json` holds the value. On the Moon, the GPU engine then runs 2.7 to 5.4 times faster on paths that turn, on about a third of the instances, and with no gap seen in the view in motion except once at the south pole, for about 4 times the triangles. The mesh engine does not gain: on the Moon it is faster at 32 cells than at 16 or 64. The geometric error of Web Mercator follows the cells of its grid, instead of 256 cells it does not have, so it refines further at the same threshold. The DEM cache of the implicit grid example holds 2048 tiles instead of 512. See the terrain test log of 3d-tiles-core.
+
+### Fixed
+
+- The mesh engine overflowed the stack on large grids, when copying their normals.
+- The apparent speed of the camera sees a turn looking straight down, and the mesh engine: compares faces when it keeps old tiles, gives the tiles sharing a pole one normal, does not build a new tile twice, and counts its scan and sort in the budget of its junctions.
+
 ### Added
 
+- New terrain refinements follow the apparent speed of the camera: `MotionRefinementScale` and `motion` of `BabylonRuntimeDriver`. The threshold of new detail rises up to 4 times while the view moves fast and comes back when it stops, which is set in `motion` of `terrain-config.json`. On the paths of the bench, the GPU engine loads up to 43 % fewer tiles in motion and keeps its threshold at rest.
+- `terrain-config.json`, read through `TERRAIN_CONFIG`, holds the settings of the terrain: grid, threshold, hysteresis, caches, levels. The engines and the implicit grid example read their defaults there, and its URL parameters only override them for a measurement.
+- The mesh engine runs on any `ITerrainTiling`, the cube included, and takes `cells`, as the GPU engine does. `DisplayedTiles` reads levels across cube faces through its `topology`, corners included. `grid` of the implicit grid example sets the cells on the Moon, and `demCache` the DEM tiles kept in memory.
+- `npm run bench:terrain`: fixed camera paths on both engines, measuring CPU, GPU, instances, memory, uploads, requests, holes and shared edges. See `packages/tools/README.md`.
 - The Moon of the implicit grid example follows the depth of its dataset from place to place: terrain refines further only inside its subtrees, such as the south polar cap, and both sides of an edge read the coarser data.
 - `frustumMargin` of `BabylonRuntimeDriver` and `createEcefCameraFrame` selects tiles in a frustum wider than the view, so that the edges of the image keep terrain while the camera turns. It defaults to 0; the Moon of the implicit grid example uses 0.25.
 - The GPU terrain engine draws a whole cover of the body: where the selection, computed for a camera that has since moved, left no tile, it draws the coarser tiles beside the cut, which read the DEM of their nearest ancestor in memory until theirs arrives. `cubeTiling` enables it with `coverRoots`, and `completeTileCover` of `@spacexr/raster` computes it. Web Mercator has no cover and draws as before.

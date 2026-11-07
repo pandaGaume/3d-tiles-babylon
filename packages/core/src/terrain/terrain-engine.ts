@@ -25,7 +25,7 @@ export interface ITerrainEngineInputs {
     imageryPages?: BabylonRasterPages;
     junctions: JunctionPolicy;
     edgeHeights: EdgeHeightPolicy;
-    /** How tiles lie on the body. Defaults to Web Mercator on WGS84. The GPU engine renders every tiling, the mesh engine Web Mercator. */
+    /** How tiles lie on the body. Defaults to Web Mercator on WGS84. */
     tiling?: ITerrainTiling;
 }
 

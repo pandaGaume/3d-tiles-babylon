@@ -12,6 +12,8 @@ import {
     BabylonRuntimeMonitor,
     GpuTerrainEngine,
     MeshTerrainEngine,
+    MotionRefinementScale,
+    TERRAIN_CONFIG,
     TILE_METRICS,
     createCubeGridSource,
     createGeodesicGridSource,
@@ -135,13 +137,33 @@ async function run(): Promise<void> {
         ? (moonDataset?.elevation.surface ??
           new CubeTileSurface(ReferenceSurface.sphere(moonRadius)))
         : undefined;
-    // Deepest level of the DEM of the Moon everywhere. A terrain tile has 16 cells per side and a DEM tile 256: the terrain
-    // reaches the samples of the DEM four levels below it, whose tiles read sub-areas of the DEM tile, not interpolated tiles.
-    const moonDemMaxLOD = moonDataset?.elevation.dataset.maxLOD ?? 10;
-    const moonMaxLOD = moonDemMaxLOD + 4;
+    // `grid` sets the cells per side of the terrain grids of the Moon, to compare them. The error of a tile follows them.
+    const gridCells = moon
+        ? Number(parameters.get("grid") ?? TERRAIN_CONFIG.grid.cells)
+        : TERRAIN_CONFIG.grid.cells;
+    if (![4, 8, 16, 32, 64, 128, 256].includes(gridCells))
+        throw new RangeError(
+            "The grid parameter must be a power of 2 from 4 to 256.",
+        );
+    // Deepest level of the DEM of the Moon everywhere. With fewer cells per side in a terrain tile than in a DEM tile, the
+    // terrain reaches the samples of the DEM levels below it, whose tiles read sub-areas of the DEM tile, not interpolated tiles.
+    const moonDemMaxLOD =
+        moonDataset?.elevation.dataset.maxLOD ??
+        TERRAIN_CONFIG.cube.syntheticDemMaxLOD;
+    const levelsBelowDem = Math.log2(TERRAIN_CONFIG.dem.tileCells / gridCells);
+    const moonMaxLOD = moonDemMaxLOD + levelsBelowDem;
     // Deepest level of its DEM anywhere, such as the south polar cap of a dataset.
     const moonDemDeepestLOD =
         moonDataset?.elevation.deepestLOD ?? moonDemMaxLOD;
+    // DEM tiles kept in memory.
+    const demCacheEntries = Number(
+        parameters.get("demCache") ?? TERRAIN_CONFIG.dem.cacheEntries,
+    );
+    // Time a DEM load nobody waits for any more goes on before it is aborted.
+    const demAbortDelay = Number(
+        parameters.get("demAbortDelay") ??
+            TERRAIN_CONFIG.dem.abortDelayMilliseconds,
+    );
     const monitoringEnabled = parameters.get("monitor") !== "0";
     const solidRendering = parameters.get("solid") === "1";
     const elevationEnabled = parameters.get("elevation") !== "0";
@@ -160,12 +182,21 @@ async function run(): Promise<void> {
             "The heights parameter must be coarsest, finest or average.",
         );
     // Refined tiles coarsen only once their error drops below (1 - hysteresis) times the threshold.
-    const hysteresis = Number(parameters.get("hysteresis") ?? "0.2");
-    // Refined tiles wait this many frames before coarsening, so that a neighbour leaving the view does not flicker them.
-    const coarsenDelay = Number(parameters.get("coarsenDelay") ?? "20");
+    const hysteresis = Number(
+        parameters.get("hysteresis") ?? TERRAIN_CONFIG.selection.hysteresis,
+    );
+    // Refined tiles wait this long before coarsening, so that a neighbour leaving the view does not flicker them.
+    const coarsenDelay = Number(
+        parameters.get("coarsenDelay") ??
+            TERRAIN_CONFIG.selection.coarseningDelayMilliseconds,
+    );
     // Main-thread milliseconds per frame for rebuilding grids whose neighbours changed; the rest waits for the next frames.
-    const junctionBudget = Number(parameters.get("junctionBudget") ?? "4");
-    const demInterpolation = parameters.get("interpolation") ?? "cubic";
+    const junctionBudget = Number(
+        parameters.get("junctionBudget") ??
+            TERRAIN_CONFIG.mesh.junctionBudgetMilliseconds,
+    );
+    const demInterpolation =
+        parameters.get("interpolation") ?? TERRAIN_CONFIG.dem.interpolation;
     if (
         demInterpolation !== "nearest" &&
         demInterpolation !== "linear" &&
@@ -227,10 +258,14 @@ async function run(): Promise<void> {
     const source = moonSurface
         ? createCubeGridSource(moonSurface, preparedHeights, {
               maxLOD: moonMaxLOD,
-              // The error of a terrain tile follows the cells of its grid, not the samples of its DEM.
-              tileSize: 16,
+              tileSize: gridCells,
               ...(moonDataset
-                  ? { subtrees: terrainSubtrees(moonDataset.elevation, 4) }
+                  ? {
+                        subtrees: terrainSubtrees(
+                            moonDataset.elevation,
+                            levelsBelowDem,
+                        ),
+                    }
                   : {}),
           })
         : createGeodesicGridSource(preparedHeights, { subtrees });
@@ -242,14 +277,16 @@ async function run(): Promise<void> {
         moon && elevationEnabled
             ? moonDataset
                 ? cubeDemPyramid(moonDataset.elevation, createDemDecoder(), {
-                      cacheEntries: 512,
+                      cacheEntries: demCacheEntries,
+                      abortDelayMilliseconds: demAbortDelay,
                       childHeightRanges,
                   })
                 : new DemPyramid({
                       registration: "point",
                       load: loadSyntheticMoonTile,
                       maxLOD: moonDemMaxLOD,
-                      cacheEntries: 512,
+                      cacheEntries: demCacheEntries,
+                      abortDelayMilliseconds: demAbortDelay,
                       childHeightRanges,
                   })
             : undefined;
@@ -341,9 +378,12 @@ async function run(): Promise<void> {
                 load: (address: ITileAddress) =>
                     // Cube tiles hold their shared edges: one more texel per side.
                     Promise.resolve(
-                        debugImageryTile(address, moon ? 257 : 256),
+                        debugImageryTile(
+                            address,
+                            TERRAIN_CONFIG.imagery.tileCells + (moon ? 1 : 0),
+                        ),
                     ),
-                maxLOD: 20,
+                maxLOD: TERRAIN_CONFIG.imagery.maxLOD,
                 // Drawn pixel by pixel; on the cube, on its samples.
                 registration: moon ? ("point" as const) : ("area" as const),
                 attribution: "",
@@ -358,9 +398,9 @@ async function run(): Promise<void> {
               }
             : await loadLocalImagery(imagery);
     const imageryMetrics = new WebMercatorTileMetrics({
-        minLOD: 3,
-        maxLOD: imagerySource?.maxLOD ?? 20,
-        tileSize: 256,
+        minLOD: TERRAIN_CONFIG.imagery.minLOD,
+        maxLOD: imagerySource?.maxLOD ?? TERRAIN_CONFIG.imagery.maxLOD,
+        tileSize: TERRAIN_CONFIG.imagery.tileCells,
     });
     const imageryPages = imagerySource
         ? new BabylonRasterPages(scene, {
@@ -381,7 +421,9 @@ async function run(): Promise<void> {
             .join(" | ");
     }
     // Deepest drape below each terrain tile: up to 4^kmax imagery pages per tile.
-    const maxDrapeDepth = Number(parameters.get("kmax") ?? "4");
+    const maxDrapeDepth = Number(
+        parameters.get("kmax") ?? TERRAIN_CONFIG.imagery.maxDrapeDepth,
+    );
 
     function createImageryRuntime(
         pages: BabylonRasterPages,
@@ -395,6 +437,7 @@ async function run(): Promise<void> {
         const imagerySource = moonSurface
             ? createCubeGridSource(moonSurface, preparedHeights, {
                   maxLOD: imageryMetrics.maxLOD,
+                  tileSize: imageryMetrics.tileSize,
                   id: "imagery",
               })
             : createGeodesicGridSource(preparedHeights, {
@@ -421,15 +464,17 @@ async function run(): Promise<void> {
                 presentation: imageryAdapter,
             },
             // The geometric error of an imagery tile is one texel: at most two texels per screen pixel.
-            maxScreenSpaceError: 2,
+            maxScreenSpaceError: TERRAIN_CONFIG.imagery.screenSpaceError,
             refinementHysteresisRatio: hysteresis,
-            coarseningDelayFrames: coarsenDelay,
-            maxConcurrentLoads: 12,
+            coarseningDelayMilliseconds: coarsenDelay,
+            maxConcurrentLoads: TERRAIN_CONFIG.selection.maxConcurrentLoads,
             ...(moon ? { verticalScale } : {}),
-            // Each imagery page holds a texture array layer of 257 x 257 texels: 512 pages bound the GPU memory.
+            // Each imagery page holds a texture array layer: these pages bound the GPU memory.
             cache: {
-                maxContentEntries: 512,
-                ...(moon ? { workingSetFactor: 3 } : {}),
+                maxContentEntries: TERRAIN_CONFIG.imagery.contentCacheEntries,
+                ...(moon
+                    ? { workingSetFactor: TERRAIN_CONFIG.cube.workingSetFactor }
+                    : {}),
             },
         });
     }
@@ -445,7 +490,8 @@ async function run(): Promise<void> {
                     load: webDemTileLoader(dem, createDemDecoder()),
                     maxLOD: dem.source.metrics.maxLOD,
                     // Room for the DEM tiles retained by the displayed cut, and for the tiles loading around it.
-                    cacheEntries: 512,
+                    cacheEntries: demCacheEntries,
+                    abortDelayMilliseconds: demAbortDelay,
                     // Levels below the DEM are generated down to the deepest grid level.
                     generation: {
                         maxLOD: TILE_METRICS.maxLOD,
@@ -459,8 +505,7 @@ async function run(): Promise<void> {
             }
           : undefined;
     // The engine turning terrain tiles into pixels; the runtimes, the DEM and the imagery pages stay shared.
-    // The mesh engine renders Web Mercator only.
-    const engineName = moon ? "gpu" : (parameters.get("engine") ?? "mesh");
+    const engineName = parameters.get("engine") ?? (moon ? "gpu" : "mesh");
     if (engineName !== "mesh" && engineName !== "gpu")
         throw new RangeError("The engine parameter must be mesh or gpu.");
     const terrainInputs: ITerrainEngineInputs = {
@@ -475,8 +520,9 @@ async function run(): Promise<void> {
     };
     const terrain: ITerrainEngine =
         engineName === "gpu"
-            ? new GpuTerrainEngine(terrainInputs)
+            ? new GpuTerrainEngine(terrainInputs, { cells: gridCells })
             : new MeshTerrainEngine(terrainInputs, {
+                  cells: gridCells,
                   maxDrapeDepth,
                   junctionBudgetMilliseconds: junctionBudget,
               });
@@ -501,14 +547,24 @@ async function run(): Promise<void> {
         activation: terrain,
         presentation: terrain,
     };
+    // New detail waits while the camera moves fast. `motion=0` leaves the threshold fixed.
+    const motionScale =
+        parameters.get("motion") === "0"
+            ? undefined
+            : new MotionRefinementScale(TERRAIN_CONFIG.motion);
     const runtime = new TileRuntime({
         id: "implicit-grid-mapzen",
         uri: "memory://geodesic-grid/tileset.json",
         adapter,
-        maxScreenSpaceError: 10,
+        maxScreenSpaceError: Number(
+            parameters.get("sse") ?? TERRAIN_CONFIG.selection.screenSpaceError,
+        ),
         refinementHysteresisRatio: hysteresis,
-        coarseningDelayFrames: coarsenDelay,
-        maxConcurrentLoads: 12,
+        ...(motionScale
+            ? { refinementThresholdScale: () => motionScale.scale }
+            : {}),
+        coarseningDelayMilliseconds: coarsenDelay,
+        maxConcurrentLoads: TERRAIN_CONFIG.selection.maxConcurrentLoads,
         instrumentation: { enabled: monitoringEnabled },
         // Neighbouring tiles stay within one level, so that every edge junction connects.
         quadtreeBalance:
@@ -520,8 +576,10 @@ async function run(): Promise<void> {
         ...(moon ? { verticalScale } : {}),
         // Terrain tiles of the view and around it; their DEM tiles are cached by the DEM pyramid.
         cache: {
-            maxContentEntries: 1024,
-            ...(moon ? { workingSetFactor: 3 } : {}),
+            maxContentEntries: TERRAIN_CONFIG.selection.contentCacheEntries,
+            ...(moon
+                ? { workingSetFactor: TERRAIN_CONFIG.cube.workingSetFactor }
+                : {}),
         },
     });
 
@@ -597,7 +655,7 @@ async function run(): Promise<void> {
                       activation: objectContent,
                       presentation: objectContent,
                   },
-                  maxScreenSpaceError: 8,
+                  maxScreenSpaceError: TERRAIN_CONFIG.objects.screenSpaceError,
                   verticalScale,
               })
             : undefined;
@@ -618,10 +676,23 @@ async function run(): Promise<void> {
     });
 
     // On the Moon, tiles beyond the edges of the image are ready when the camera turns. Web Mercator selects as before.
-    const frustum = moon ? { frustumMargin: 0.25 } : {};
+    const frustum = moon
+        ? { frustumMargin: TERRAIN_CONFIG.cube.frustumMargin }
+        : {};
     const driver = new BabylonRuntimeDriver(runtime, scene, {
         camera,
         ...frustum,
+        ...(motionScale
+            ? {
+                  motion: {
+                      scale: motionScale,
+                      surfaceDistance: () =>
+                          "frame" in camera
+                              ? camera.frame.radius
+                              : camera.radius,
+                  },
+              }
+            : {}),
         onError: (error) => {
             status.textContent = "Runtime frame failed";
             console.error("3D Tiles pipeline frame failed", error);
@@ -660,6 +731,7 @@ async function run(): Promise<void> {
         renderer,
         camera,
         runtime,
+        motionScale,
         imageryRuntime,
         terrain,
         // Parts of the mesh engine, for the probes written against it.

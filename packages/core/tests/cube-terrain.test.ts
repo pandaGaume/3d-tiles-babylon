@@ -14,7 +14,7 @@ import {
 } from "@spacexr/tiles";
 import { describe, expect, it } from "vitest";
 
-import { createCubeGridSource, cubeTiling, metadataTileAddress, webMercatorTiling } from "../src";
+import { TERRAIN_CONFIG, TILE_METRICS, createCubeGridSource, cubeTiling, metadataTileAddress, webMercatorTiling } from "../src";
 import { instancedGridPixelShader } from "../src/terrain/gpu/shaders/instancedGrid.fragment";
 import { instancedGridVertexShader } from "../src/terrain/gpu/shaders/instancedGrid.vertex";
 
@@ -146,6 +146,36 @@ describe("terrain tilings", () => {
         expect(mercator.radialHeights).toBe(false);
         expect(mercator.boundingBox).toBeUndefined();
         expect(mercator.topology.neighbor({ lod: 1, x: 0, y: 0 }, TileNeighbor.W)?.address).toEqual({ lod: 1, x: 1, y: 0 });
+    });
+
+    it("give the tiles sharing a pole one normal", () => {
+        const tiling = cubeTiling(MOON);
+        const corners = [
+            { x: 0, y: 0, u: 1, v: 1 },
+            { x: 1, y: 0, u: 0, v: 1 },
+            { x: 0, y: 1, u: 1, v: 0 },
+            { x: 1, y: 1, u: 0, v: 0 },
+        ];
+        const normals = corners.map(({ x, y, u, v }) => {
+            const address = { face: 4, lod: 1, x, y };
+            return tiling.surfaceNormal(address, u, v, tiling.surface.up(address, u, v), [0, 0], 1);
+        });
+        for (const normal of normals) {
+            const angle = Math.acos(Math.min(1, normal.x * normals[0]!.x + normal.y * normals[0]!.y + normal.z * normals[0]!.z));
+            expect(angle).toBeLessThan((0.01 * Math.PI) / 180);
+        }
+    });
+
+    it("give a Web Mercator tile the error of the cells of its grid", () => {
+        expect(TILE_METRICS.tileSize).toBe(TERRAIN_CONFIG.grid.cells);
+    });
+
+    it("give a cube tile the error of the cells of its grid", () => {
+        const errorWith = (tileSize?: number): number =>
+            createCubeGridSource(MOON, undefined, { maxLOD: 4, ...(tileSize === undefined ? {} : { tileSize }) }).tileset.geometricError;
+
+        expect(errorWith()).toBe(errorWith(TERRAIN_CONFIG.grid.cells));
+        expect(errorWith(2 * TERRAIN_CONFIG.grid.cells)).toBeCloseTo(errorWith() / 2, 6);
     });
 
     it("build a grid source with the face in the metadata of its tiles", () => {

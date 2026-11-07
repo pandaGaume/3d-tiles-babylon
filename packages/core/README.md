@@ -35,6 +35,7 @@ import "@babylonjs/loaders/glTF/2.0/index.js";
 | `MeshRasterDrape`, `RasterDrapeMaterialPlugin`                   | `4^k` imagery pages per terrain mesh, `k` following the imagery cut, read through a per-mesh cell table  |
 | `GpuTerrainEngine`                                               | Terrain engine instancing predefined grids, sized and placed per instance, heights read on the GPU       |
 | `ITerrainEngine`, `MeshTerrainEngine`                            | Interchangeable terrain engines; the mesh engine builds one CPU mesh per tile, draped with imagery pages |
+| `TERRAIN_CONFIG`                                                 | Settings of the terrain, read from `terrain-config.json`: change them there, not in the code             |
 | `createGeodesicGridSource`, `TILE_METRICS`                       | Implicit Web Mercator quadtree of terrain tiles, with height ranges prepared by a DEM pyramid            |
 | `DisplayedTiles`                                                 | Last known cut of a quadtree: levels across each tile edge, kept through tiles leaving the view          |
 

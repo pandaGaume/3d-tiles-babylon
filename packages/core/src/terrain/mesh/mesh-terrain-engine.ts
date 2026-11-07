@@ -7,12 +7,15 @@ import type {
 
 import { MeshRasterDrape } from "../../draping/mesh/mesh-raster-drape";
 import { BabylonGeodesicGridPipeline, type IBabylonGeodesicGridHandle } from "./geodesic-grid-pipeline";
+import { TERRAIN_CONFIG } from "../terrain-config";
 import type { ITerrainEngine, ITerrainEngineInputs } from "../terrain-engine";
 
 export interface IMeshTerrainEngineOptions {
-    /** Deepest drape below each terrain tile: up to `4^maxDrapeDepth` imagery pages per tile. Defaults to 4. */
+    /** Cells per grid side. Defaults to {@link TERRAIN_CONFIG}, like the GPU engine. */
+    cells?: number;
+    /** Deepest drape below each terrain tile: up to `4^maxDrapeDepth` imagery pages per tile. Defaults to {@link TERRAIN_CONFIG}. */
     maxDrapeDepth?: number;
-    /** Main-thread time per frame for rebuilding grids whose neighbours changed, in milliseconds. Defaults to 4. */
+    /** Main-thread time per frame for rebuilding grids whose neighbours changed, in milliseconds. Defaults to {@link TERRAIN_CONFIG}. */
     junctionBudgetMilliseconds?: number;
 }
 
@@ -36,21 +39,27 @@ export class MeshTerrainEngine implements ITerrainEngine<IBabylonGeodesicGridHan
         this.drape =
             inputs.imageryPages && !inputs.wireframe
                 ? new MeshRasterDrape(inputs.scene, inputs.imageryPages, {
-                      maxDepth: options.maxDrapeDepth ?? 4,
+                      maxDepth: options.maxDrapeDepth ?? TERRAIN_CONFIG.imagery.maxDrapeDepth,
                   })
                 : undefined;
-        this.grids = new BabylonGeodesicGridPipeline(inputs.scene, inputs.labelLayer, {
-            wireframe: inputs.wireframe,
-            junctions: inputs.junctions,
-            edgeHeights: inputs.edgeHeights,
-            ...(this.drape ? { drape: this.drape } : {}),
-            ...(inputs.elevation ? { elevation: inputs.elevation } : {}),
-            ...(options.junctionBudgetMilliseconds === undefined
-                ? {}
-                : {
-                      junctionBudgetMilliseconds: options.junctionBudgetMilliseconds,
-                  }),
-        });
+        this.grids = new BabylonGeodesicGridPipeline(
+            inputs.scene,
+            inputs.labelLayer,
+            {
+                wireframe: inputs.wireframe,
+                junctions: inputs.junctions,
+                edgeHeights: inputs.edgeHeights,
+                ...(inputs.tiling ? { tiling: inputs.tiling } : {}),
+                ...(this.drape ? { drape: this.drape } : {}),
+                ...(inputs.elevation ? { elevation: inputs.elevation } : {}),
+                ...(options.junctionBudgetMilliseconds === undefined
+                    ? {}
+                    : {
+                          junctionBudgetMilliseconds: options.junctionBudgetMilliseconds,
+                      }),
+            },
+            options.cells,
+        );
     }
 
     public activate(context: Activation): Promise<void> {

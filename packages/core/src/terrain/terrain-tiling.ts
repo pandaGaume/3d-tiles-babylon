@@ -1,5 +1,6 @@
 import { cubeTileBoundingBox, type ITileAddress } from "@spacexr/3d-tiles-runtime";
 import { GeodeticSystem, type ICartesian3 } from "@spacexr/geodesy";
+import { webMercatorSurfaceNormal } from "@spacexr/dem";
 import { buildGridTileGeometry, buildGridTileShape, type IGridTopology } from "@spacexr/grid";
 import {
     CUBE_TILE_TOPOLOGY,
@@ -27,8 +28,7 @@ export type TerrainPickHeight = (x: number, y: number, face: number) => number;
  * How terrain tiles lie on a body. The engines stay the same whatever the tiling: they ask it where a tile is and how
  * tiles connect.
  *
- * Web Mercator is the official engine and the cube an alternative under test: everything the cube needs lives in
- * {@link cubeTiling}, so that it cannot change how Web Mercator tiles are computed.
+ * Only what really differs between projections belongs here: addressing, positions and the direction of heights.
  */
 export interface ITerrainTiling {
     /** Places the tiles on the body. */
@@ -55,6 +55,18 @@ export interface ITerrainTiling {
         address: ITileAddress,
         height: TerrainPickHeight,
     ): { center: ICartesian3; positions: Float32Array };
+    /**
+     * Normal of the displaced surface at a point of a tile, from the gradient of the heights over the pyramid, in metres
+     * per normalized unit.
+     */
+    surfaceNormal(
+        address: ITileAddress,
+        u: number,
+        v: number,
+        up: ICartesian3,
+        gradient: readonly [number, number],
+        verticalScale: number,
+    ): ICartesian3;
     /** Area of a tile in a DEM tile, the DEM of a neighbour included. */
     demArea(address: ITileAddress, demTile: ITileAddress): ITerrainDemArea;
     /** Roots of a tiling covering a whole body: the engine then draws coarse terrain where the selection left no tile. */
@@ -86,6 +98,7 @@ export function webMercatorTiling(system: GeodeticSystem = GeodeticSystem.WGS84)
             }
             return { center, positions };
         },
+        surfaceNormal: (_address, _u, _v, up, gradient, verticalScale) => webMercatorSurfaceNormal(gradient, up, verticalScale),
         // The tile is never coarser than the DEM tile; it may lie outside it, on its edge, for a neighbour's DEM.
         demArea: (address, demTile) => {
             const scale = 2 ** (address.lod - demTile.lod);
@@ -121,6 +134,33 @@ export function cubeTiling(surface: CubeTileSurface): ITerrainTiling {
             return buildGridTileGeometry(topology, address, surface, {
                 heightInitializer: ({ u, v }) => height((address.x + u) / count, (address.y + v) / count, address.face ?? 0),
             });
+        },
+        surfaceNormal: (address, u, v, up, gradient, verticalScale) => {
+            // Tangents of the reference surface per unit of tile coordinate, from points half a cell of 1/16 around.
+            const step = 1 / 32;
+            const west = surface.point(address, u - step, v);
+            const east = surface.point(address, u + step, v);
+            const north = surface.point(address, u, v - step);
+            const south = surface.point(address, u, v + step);
+            const count = 2 ** address.lod;
+            const slopeU = (gradient[0] * verticalScale) / count;
+            const slopeV = (gradient[1] * verticalScale) / count;
+            const tangentU = {
+                x: (east.x - west.x) / (2 * step) + up.x * slopeU,
+                y: (east.y - west.y) / (2 * step) + up.y * slopeU,
+                z: (east.z - west.z) / (2 * step) + up.z * slopeU,
+            };
+            const tangentV = {
+                x: (south.x - north.x) / (2 * step) + up.x * slopeV,
+                y: (south.y - north.y) / (2 * step) + up.y * slopeV,
+                z: (south.z - north.z) / (2 * step) + up.z * slopeV,
+            };
+            // East cross north, which points away from the body.
+            const x = tangentV.y * tangentU.z - tangentV.z * tangentU.y;
+            const y = tangentV.z * tangentU.x - tangentV.x * tangentU.z;
+            const z = tangentV.x * tangentU.y - tangentV.y * tangentU.x;
+            const length = Math.hypot(x, y, z);
+            return length > 0 ? { x: x / length, y: y / length, z: z / length } : { x: up.x, y: up.y, z: up.z };
         },
         demArea: (address, demTile) => CUBE_TILE_TOPOLOGY.areaIn(address, demTile),
         coverRoots: [0, 1, 2, 3, 4, 5].map((face) => ({ face, lod: 0, x: 0, y: 0 })),

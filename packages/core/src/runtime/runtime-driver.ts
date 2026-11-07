@@ -1,10 +1,12 @@
 import type { Camera } from "@babylonjs/core/Cameras/camera.js";
+import { Axis } from "@babylonjs/core/Maths/math.axis.js";
 import type { Observer } from "@babylonjs/core/Misc/observable.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import { CameraChangeFlags, type IEcefCameraFrame } from "@spacexr/3d-tiles-runtime";
 
 import { BabylonCameraChangeTracker } from "../camera/camera-change-tracker";
 import { createEcefCameraFrame, type IEcefCameraFrameOptions } from "../spatial/camera-frame";
+import { apparentPixelsPerSecond, type ICameraPose, type MotionRefinementScale } from "./motion-refinement";
 
 /** Part of `TileRuntime` driven frame by frame. */
 export interface IFrameDrivenRuntime {
@@ -12,6 +14,16 @@ export interface IFrameDrivenRuntime {
     start(): Promise<void>;
     onCameraChanged(camera: IEcefCameraFrame, changes?: CameraChangeFlags): void;
     processFrame(): Promise<unknown>;
+    /** Asks for one more frame with the latest camera. */
+    requestFrame?(): void;
+}
+
+/** Follows the speed of the camera for the threshold of new refinements of a runtime. */
+export interface IBabylonRuntimeMotion {
+    /** The factor the runtime reads, in `refinementThresholdScale`. */
+    scale: MotionRefinementScale;
+    /** Distance from the camera to the terrain it looks at, which turns its move into an apparent speed. */
+    surfaceDistance: () => number;
 }
 
 export interface IBabylonRuntimeDriverOptions {
@@ -21,6 +33,8 @@ export interface IBabylonRuntimeDriverOptions {
     onError?: (error: unknown) => void;
     /** Widens the frustum tiles are selected in; see {@link IEcefCameraFrameOptions.frustumMargin}. Defaults to 0. */
     frustumMargin?: number;
+    /** Holds back new refinements while the camera moves fast. Without it, the threshold of the runtime is fixed. */
+    motion?: IBabylonRuntimeMotion;
 }
 
 /**
@@ -37,6 +51,8 @@ export class BabylonRuntimeDriver {
     private disposed = false;
     private readonly onError: (error: unknown) => void;
     private readonly frameOptions: IEcefCameraFrameOptions;
+    private readonly motion: IBabylonRuntimeMotion | undefined;
+    private lastPose: (ICameraPose & { milliseconds: number }) | undefined;
 
     public constructor(
         private readonly runtime: IFrameDrivenRuntime,
@@ -44,6 +60,7 @@ export class BabylonRuntimeDriver {
         options: IBabylonRuntimeDriverOptions = {},
     ) {
         this.camera = options.camera;
+        this.motion = options.motion;
         this.frameOptions = options.frustumMargin === undefined ? {} : { frustumMargin: options.frustumMargin };
         this.onError = options.onError ?? ((error) => console.error("3D Tiles runtime frame failed", error));
     }
@@ -76,6 +93,7 @@ export class BabylonRuntimeDriver {
         if (!this.tracker || this.disposed) return;
         const changes = this.tracker.capture();
         if (changes !== CameraChangeFlags.None) this.runtime.onCameraChanged(this.cameraFrame(), changes);
+        this.followMotion();
         if (this.framePending || !this.runtime.hasPendingWork) return;
         this.framePending = true;
         void this.runtime
@@ -93,6 +111,33 @@ export class BabylonRuntimeDriver {
         this.disposed = true;
         this.scene.onAfterRenderObservable.remove(this.observer);
         this.observer = null;
+    }
+
+    /** A still camera asks for no frame: when the factor drops, the view needs one to refine. */
+    private followMotion(): void {
+        if (!this.motion) return;
+        const camera = this.camera!;
+        const milliseconds = performance.now();
+        const position = camera.globalPosition;
+        const direction = camera.getDirection(Axis.Z);
+        const pose = {
+            position: { x: position.x, y: position.y, z: position.z },
+            direction,
+            up: camera.getDirection(Axis.Y),
+            milliseconds,
+        };
+        const previous = this.lastPose;
+        this.lastPose = pose;
+        if (!previous) return;
+        const focalPixels = this.scene.getEngine().getRenderHeight() / (2 * Math.tan(camera.fov / 2));
+        const speed = apparentPixelsPerSecond(
+            previous,
+            pose,
+            this.motion.surfaceDistance(),
+            focalPixels,
+            (milliseconds - previous.milliseconds) / 1000,
+        );
+        if (this.motion.scale.update(speed, milliseconds)) this.runtime.requestFrame?.();
     }
 
     private cameraFrame(): IEcefCameraFrame {
