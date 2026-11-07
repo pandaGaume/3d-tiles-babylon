@@ -38,7 +38,7 @@ varying vec4 vDrape;
 #endif
 varying vec3 vImagery;
 #ifndef AMBIENT_ONLY
-#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
+#ifdef RUNTIME_SELECTION
 uniform vec3 inverseRadiiSquared;
 varying vec2 vTile;
 varying vec4 vPage;
@@ -75,23 +75,10 @@ return instElevation;
 float heightIn(vec4 reference, vec2 uv) {
 if (reference.w < 0.0) return 0.0;
 float size = float(textureSize(elevations, 0).x - 2);
-#ifdef RADIAL_HEIGHTS
-int turns = int(fract(reference.w) * 4.0 + 0.5);
-vec2 turned = uv;
-if (turns == 1) turned = vec2(1.0 - uv.y, uv.x);
-else if (turns == 2) turned = vec2(1.0 - uv.x, 1.0 - uv.y);
-else if (turns == 3) turned = vec2(uv.y, 1.0 - uv.x);
-vec2 texel = (reference.xy + turned * reference.z) * (size - 1.0);
-#else
 vec2 texel = (reference.xy + uv * reference.z) * (size - 1.0);
-#endif
 ivec2 base = clamp(ivec2(floor(texel)), ivec2(0), ivec2(int(size) - 2));
 vec2 f = clamp(texel - vec2(base), 0.0, 1.0);
-#ifdef RADIAL_HEIGHTS
-int layer = int(floor(reference.w));
-#else
 int layer = int(reference.w + 0.5);
-#endif
 base += ivec2(1);
 float h00 = texelFetch(elevations, ivec3(base, layer), 0).r;
 float h10 = texelFetch(elevations, ivec3(base + ivec2(1, 0), layer), 0).r;
@@ -152,12 +139,8 @@ vec4 shape = vec4(offset, atan(surfaceInfo.x, surfaceInfo.y));
 #else
 vec4 shape = texelFetch(shapes, ivec3(h, int(instPlace.w + 0.5)), 0);
 #endif
-#ifdef RADIAL_HEIGHTS
-vec3 up = normalize(instRotation.xyz + shape.xyz);
-#else
 float longitude = (uv.x - 0.5) * instRotation.z;
 vec3 up = vec3(cos(shape.w) * cos(longitude), cos(shape.w) * sin(longitude), sin(shape.w));
-#endif
 return shape.xyz + up * heightIn(elevationAt(h), uv);
 }
 bool finerAcross(int bit) {
@@ -177,25 +160,9 @@ return sampledPosition(h);
 #endif
 }
 #ifndef AMBIENT_ONLY
-#ifdef RADIAL_HEIGHTS
-vec3 shapePosition(ivec2 h) {
-return texelFetch(shapes, ivec3(h, int(instPlace.w + 0.5)), 0).xyz;
-}
-vec3 surfaceTangent(ivec2 before, ivec2 after, vec3 normal) {
-int last = steps();
-ivec2 first = clamp(before, ivec2(0), ivec2(last));
-ivec2 second = clamp(after, ivec2(0), ivec2(last));
-vec3 chord = (shapePosition(second) - shapePosition(first)) * float(last) / float(second.x - first.x + second.y - first.y);
-return chord - normal * dot(chord, normal);
-}
-#endif
 #endif
 vec3 rotate(vec3 p) {
-#ifdef RADIAL_HEIGHTS
-return p;
-#else
 return vec3(instRotation.x * p.x - instRotation.y * p.y, instRotation.y * p.x + instRotation.x * p.y, p.z);
-#endif
 }
 void main(void) {
 ivec2 h = ivec2(floor(position.xy * float(steps()) + 0.5));
@@ -213,19 +180,7 @@ vec3 local = positionAt(h);
 #ifdef PROVIDER_NORMALS
 vNormalPage = instNormal;
 #endif
-#ifdef RADIAL_HEIGHTS
-vec3 body = instRotation.xyz + shapePosition(h);
-vec3 surfaceNormal = normalize(body * inverseRadiiSquared);
-vUp = normalize(body);
-vEast = surfaceTangent(h - ivec2(2, 0), h + ivec2(2, 0), surfaceNormal);
-vSouth = surfaceTangent(h - ivec2(0, 2), h + ivec2(0, 2), surfaceNormal);
-vTile = position.xy;
-vPage = instElevation;
-vEdgeN = instEdgeN;
-vEdgeE = instEdgeE;
-vEdgeS = instEdgeS;
-vEdgeW = instEdgeW;
-#elif defined(RUNTIME_SELECTION)
+#ifdef RUNTIME_SELECTION
 vec2 uv = position.xy;
 float sine = surfaceInfo.x, cosine = surfaceInfo.y;
 float denominator = surfaceInfo.w;

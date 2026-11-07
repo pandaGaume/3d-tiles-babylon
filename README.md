@@ -22,31 +22,42 @@ examples/babylon-implicit-grid-mapzen/ Implicit WebMercator quadtree with Mapzen
 ```ts
 import "@babylonjs/loaders/glTF/2.0/index.js";
 import {
-    BabylonGltfTileAdapter,
-    BabylonRuntimeDriver,
-    createGeospatialCamera,
-    createGeospatialEngine,
-    createGeospatialScene,
+  BabylonGltfTileAdapter,
+  BabylonRuntimeDriver,
+  createGeospatialCamera,
+  createGeospatialEngine,
+  createGeospatialScene,
 } from "@spacexr/3d-tiles-babylon";
 import { TilesetJsonCodec } from "@spacexr/3d-tiles-core";
-import { EcefSpatialMetric, TileRuntime, type ITilesetLoader } from "@spacexr/3d-tiles-runtime";
+import {
+  EcefSpatialMetric,
+  TileRuntime,
+  type ITilesetLoader,
+} from "@spacexr/3d-tiles-runtime";
 
 const engine = createGeospatialEngine(canvas);
 const scene = createGeospatialScene(engine);
 const camera = createGeospatialCamera(scene, {
-    target: { latitudeDegrees: 48.8566, longitudeDegrees: 2.3522 },
-    radius: 1800,
+  target: { latitudeDegrees: 48.8566, longitudeDegrees: 2.3522 },
+  radius: 1800,
 });
 
 const codec = new TilesetJsonCodec();
 const tilesets: ITilesetLoader = {
-    load: async ({ uri, signal }) => ({ tileset: codec.decode(await (await fetch(uri, { signal })).text()) }),
+  load: async ({ uri, signal }) => ({
+    tileset: codec.decode(await (await fetch(uri, { signal })).text()),
+  }),
 };
 const content = new BabylonGltfTileAdapter(scene);
 const runtime = new TileRuntime({
-    id: "city",
-    uri: "https://example.test/tileset.json",
-    adapter: { tilesets, activation: content, presentation: content, spatial: new EcefSpatialMetric() },
+  id: "city",
+  uri: "https://example.test/tileset.json",
+  adapter: {
+    tilesets,
+    activation: content,
+    presentation: content,
+    spatial: new EcefSpatialMetric(),
+  },
 });
 
 await new BabylonRuntimeDriver(runtime, scene, { camera }).start();

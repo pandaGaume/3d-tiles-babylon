@@ -10,7 +10,7 @@ varying vec4 vDrape;
 uniform sampler2DArray imageryTables;
 #endif
 #ifndef AMBIENT_ONLY
-#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
+#ifdef RUNTIME_SELECTION
 varying vec2 vTile;
 varying vec4 vPage;
 varying vec3 vUp;
@@ -45,7 +45,7 @@ uniform sampler2DArray imagery;
 uniform float imagerySize;
 #endif
 #ifndef AMBIENT_ONLY
-#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
+#ifdef RUNTIME_SELECTION
 vec2 sampleGradient(ivec2 p, int layer) {
 p += ivec2(1);
 float west = texelFetch(elevations, ivec3(p - ivec2(1, 0), layer), 0).r;
@@ -126,7 +126,7 @@ albedo = textureLod(imagery, vec3(uv, floor(vImagery.z + 0.5)), 0.0).rgb;
 #ifdef AMBIENT_ONLY
 gl_FragColor = vec4(albedo, 1.0);
 #else
-#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
+#ifdef RUNTIME_SELECTION
 vec3 normal;
 #ifdef PROVIDER_NORMALS
 if (!providerNormal(normal)) {

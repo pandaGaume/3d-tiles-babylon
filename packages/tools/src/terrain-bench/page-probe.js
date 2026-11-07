@@ -11,12 +11,6 @@ window.__TERRAIN_BENCH__ = (() => {
             if (camera.frame) camera.frame.rotateHeading(path.turn * dt);
             else camera.yaw = (camera.yaw ?? 0) + path.turn * dt;
         }
-        if (path.sway) {
-            const { amplitude, rate } = path.sway;
-            const turn = amplitude * (Math.sin(rate * t) - Math.sin(rate * (t - dt)));
-            if (camera.frame) camera.frame.rotateHeading(turn);
-            else camera.yaw = (camera.yaw ?? 0) + turn;
-        }
         if (path.zoom) {
             const { nearest, farthest, rate } = path.zoom;
             const span = Math.log(farthest / nearest);

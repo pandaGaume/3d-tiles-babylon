@@ -2,8 +2,6 @@
 export interface IBenchPath {
     /** Heading change, in radians per second. */
     turn?: number;
-    /** Heading going back and forth: its amplitude in radians, and `rate` in radians per second. */
-    sway?: { amplitude: number; rate: number };
     /** Zoom in and out between two radii, in metres; `rate` is the logarithm of the factor per second. */
     zoom?: { nearest: number; farthest: number; rate: number };
 }
@@ -11,7 +9,6 @@ export interface IBenchPath {
 /** Where a scenario looks, and what it validates. */
 export interface IBenchView {
     name: string;
-    projection: "mercator" | "cube";
     /** URL parameters of the view. */
     query: string;
     path: IBenchPath;
@@ -32,46 +29,25 @@ const TURN_RATE = 0.7;
 
 const ZOOM = (nearest: number): IBenchPath => ({ zoom: { nearest, farthest: 400000, rate: WHEEL_RATE } });
 const TURN: IBenchPath = { turn: TURN_RATE };
-const GROUND_LEVEL = "lat=-89.135019&lon=106.871898&radius=35.2&pitch=87.24&yaw=-148.53";
 
 export const BENCH_VIEWS: readonly IBenchView[] = [
-    { name: "mont-blanc", projection: "mercator", query: "radius=25000&pitch=60", path: TURN },
-    { name: "mont-blanc-zoom", projection: "mercator", query: "radius=400000&pitch=60", path: ZOOM(5000) },
-    { name: "plain", projection: "cube", query: "lat=35&lon=-15&radius=40000&pitch=70", path: TURN },
-    { name: "plain-zoom", projection: "cube", query: "lat=35&lon=-15&radius=400000&pitch=70", path: ZOOM(5000) },
-    // An edge between two faces, and one turned between a face and a pole.
-    { name: "face-edge", projection: "cube", query: "lat=0&lon=45&radius=40000&pitch=60", path: TURN },
-    { name: "turned-edge", projection: "cube", query: "lat=45&lon=90&radius=40000&pitch=60", path: TURN },
-    // A vertex of the cube, where 3 tiles meet.
-    { name: "cube-vertex", projection: "cube", query: "lat=35.264&lon=45&radius=40000&pitch=60", path: TURN },
-    { name: "pole", projection: "cube", query: "lat=-89.67&lon=129.2&radius=8000&pitch=60", path: TURN },
-    // Where a dataset gets deeper: data of different resolutions across an edge.
-    { name: "cap-border", projection: "cube", query: "lat=-86.6&lon=-90&radius=20000&pitch=60", path: TURN },
-    // Near the ground and looking along it, where the view crosses tiles of every level, from the finest to the horizon.
-    { name: "ground-level", projection: "cube", query: GROUND_LEVEL, path: TURN },
-    // The same with small moves back and forth, which bring back the tiles that have just left.
-    { name: "ground-level-sway", projection: "cube", query: GROUND_LEVEL, path: { sway: { amplitude: 0.08, rate: 3 } } },
+    { name: "mont-blanc", query: "radius=25000&pitch=60", path: TURN },
+    { name: "mont-blanc-zoom", query: "radius=400000&pitch=60", path: ZOOM(5000) },
 ];
 
 /**
  * Every view on every engine.
  *
  * @param base - Address of the example.
- * @param dataset - Address of a tile service for the cube; without it, the synthetic Moon.
- * @param grid - Cells per side of the grids on the cube; without it, those of the example.
  */
-export function benchScenarios(base: string, dataset?: string, grid?: number): IBenchScenario[] {
+export function benchScenarios(base: string): IBenchScenario[] {
     const root = base.replace(/\/+$/, "");
     return BENCH_VIEWS.flatMap((view) =>
-        BENCH_ENGINES.map((engine) => {
-            const body =
-                view.projection === "cube" ? `body=moon&${dataset ? `dataset=${dataset}&` : ""}${grid ? `grid=${grid}&` : ""}` : "";
-            return {
-                ...view,
-                engine,
-                id: `${view.name}/${engine}`,
-                url: `${root}/?${body}engine=${engine}&solid=1&imagery=none&${view.query}`,
-            };
-        }),
+        BENCH_ENGINES.map((engine) => ({
+            ...view,
+            engine,
+            id: `${view.name}/${engine}`,
+            url: `${root}/?engine=${engine}&solid=1&imagery=none&${view.query}`,
+        })),
     );
 }

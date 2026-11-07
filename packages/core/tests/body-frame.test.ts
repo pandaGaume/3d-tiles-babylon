@@ -1,11 +1,10 @@
 import { Matrix, Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import { PerformanceConfigurator } from "@babylonjs/core/Engines/performanceConfigurator.js";
-import { CubeTileSurface, ReferenceSurface } from "@spacexr/tiles";
 import { describe, expect, it } from "vitest";
 import { terrainBodyFrame } from "../src/terrain/gpu/body-frame";
 import { PickSurface } from "../src/terrain/gpu/pick-surface";
-import { cubeTiling } from "../src/terrain/terrain-tiling";
+import { webMercatorTiling } from "../src/terrain/terrain-tiling";
 import { instancedGridVertexShader } from "../src/terrain/gpu/shaders/instancedGrid.vertex";
 import { createNullScene } from "./helpers";
 
@@ -43,9 +42,9 @@ describe("GPU terrain body frame", () => {
         const root = new TransformNode("body", scene);
         root.position.set(1000, 2000, 3000);
         root.metadata = { bodyId: "arbitrary-body", layerId: "terrain" };
-        const pick = new PickSurface(scene, undefined, 1, 4, cubeTiling(new CubeTileSurface(ReferenceSurface.sphere(1738100))), root);
+        const pick = new PickSurface(scene, undefined, 1, 4, webMercatorTiling(), root);
         try {
-            pick.update([{ face: 0, lod: 0, x: 0, y: 0 }]);
+            pick.update([{ lod: 0, x: 0, y: 0 }]);
             const mesh = scene.meshes[0]!;
             expect(mesh.parent).toBe(root);
             expect(mesh.metadata).toEqual(root.metadata);

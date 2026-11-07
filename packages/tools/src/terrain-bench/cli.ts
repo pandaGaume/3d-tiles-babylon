@@ -20,14 +20,12 @@ const USAGE = `Usage: terrain-bench [options]
 Flies fixed camera paths in headless Chrome over the implicit grid example, which must be running.
 
   --url <address>      Address of the example. Defaults to http://localhost:5174
-  --dataset <address>  Tile service for the cube. Defaults to the synthetic Moon
   --browser <path>     Chrome or Chromium. Defaults to the usual locations
   --only <pattern>     Scenarios whose id matches this regular expression
   --seconds <n>        Length of each path. Defaults to 8
   --label <text>       Name of what is measured. Defaults to the current commit
   --out <file>         Writes the report as JSON
   --compare <file>     Compares with a report written earlier
-  --grid <cells>       Cells per side of the grids on the cube. Defaults to those of the example
   --query <text>       More URL parameters of the example, such as demCache=2048
   --shots <folder>     Writes an image of each scenario, once at rest after its path
   --max-requests <n>   Requests a page may send to tile servers before they are blocked and the
@@ -236,11 +234,10 @@ async function main(): Promise<void> {
     const seconds = Number(option("seconds") ?? 8);
     const only = option("only");
     const probe = readFileSync(fileURLToPath(new URL("./page-probe.js", import.meta.url)), "utf8");
-    const grid = option("grid");
     const query = option("query");
     const shots = option("shots");
     const maxRequests = Number(option("max-requests") ?? 5000);
-    const scenarios = benchScenarios(option("url") ?? "http://localhost:5174", option("dataset"), grid ? Number(grid) : undefined).filter(
+    const scenarios = benchScenarios(option("url") ?? "http://localhost:5174").filter(
         (scenario) => !only || new RegExp(only).test(scenario.id),
     );
     const label = option("label") ?? execSync("git rev-parse --short HEAD").toString().trim();

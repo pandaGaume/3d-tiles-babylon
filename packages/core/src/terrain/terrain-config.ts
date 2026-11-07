@@ -13,8 +13,6 @@ export interface ITerrainConfig {
         screenSpaceError: number;
         /** A refined tile coarsens once its error drops below `1 - hysteresis` times the threshold. */
         hysteresis: number;
-        /** Periphery of the view where tiles stay active, as a fraction of the view. */
-        frustumMargin: number;
         /** Time a refined tile waits before coarsening. */
         coarseningDelayMilliseconds: number;
         maxConcurrentLoads: number;
@@ -56,24 +54,9 @@ export interface ITerrainConfig {
         /** Deepest drape below a terrain tile of the mesh engine: up to `4^maxDrapeDepth` imagery pages per tile. */
         maxDrapeDepth: number;
     };
-    objects: {
-        screenSpaceError: number;
-    };
-    orbitalCamera: {
-        /** Shortest distance from the camera to the point it orbits, in metres. */
-        radiusMin: number;
-        /** Lowest height of the camera above the terrain, in metres. */
-        altitudeMin: number;
-    };
     mercator: {
         minLOD: number;
         maxLOD: number;
-    };
-    cube: {
-        /** Budgets of the runtime cache follow what the view uses, times this factor. */
-        workingSetFactor: number;
-        /** Deepest DEM level of the synthetic Moon. */
-        syntheticDemMaxLOD: number;
     };
     mesh: {
         /** Main-thread time per frame for rebuilding grids whose neighbours changed. */

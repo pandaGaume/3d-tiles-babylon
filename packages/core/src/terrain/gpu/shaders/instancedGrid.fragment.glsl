@@ -9,7 +9,7 @@ varying vec4 vDrape;
 uniform sampler2DArray imageryTables;
 #endif
 #ifndef AMBIENT_ONLY
-#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
+#ifdef RUNTIME_SELECTION
 varying vec2 vTile;
 varying vec4 vPage;
 varying vec3 vUp;
@@ -48,7 +48,7 @@ uniform float imagerySize;
 #endif
 
 #ifndef AMBIENT_ONLY
-#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
+#ifdef RUNTIME_SELECTION
 // Central differences include the one-sample gutter copied from resident neighbour DEMs.
 vec2 sampleGradient(ivec2 p, int layer) {
     p += ivec2(1);
@@ -141,7 +141,7 @@ void main(void) {
     // Uniform white ambient illumination preserves the imagery without computing a terrain normal.
     gl_FragColor = vec4(albedo, 1.0);
 #else
-#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
+#ifdef RUNTIME_SELECTION
     // The normal of the displaced surface reads the DEM at each pixel, not the vertices of the grid: relief finer than a
     // cell shows, and both sides of a tile edge read the same slope. Its page must hold the samples of the source: levels
     // interpolated below it have a slope constant by parts, which shows as a checkerboard.

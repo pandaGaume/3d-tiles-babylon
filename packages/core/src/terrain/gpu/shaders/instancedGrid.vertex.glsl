@@ -53,7 +53,7 @@ varying vec4 vDrape;
 
 varying vec3 vImagery;
 #ifndef AMBIENT_ONLY
-#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
+#ifdef RUNTIME_SELECTION
 // Inverse squared radii of the reference surface.
 uniform vec3 inverseRadiiSquared;
 varying vec2 vTile;
@@ -97,23 +97,10 @@ vec4 elevationAt(ivec2 h) {
 float heightIn(vec4 reference, vec2 uv) {
     if (reference.w < 0.0) return 0.0;
     float size = float(textureSize(elevations, 0).x - 2);
-#ifdef RADIAL_HEIGHTS
-    int turns = int(fract(reference.w) * 4.0 + 0.5);
-    vec2 turned = uv;
-    if (turns == 1) turned = vec2(1.0 - uv.y, uv.x);
-    else if (turns == 2) turned = vec2(1.0 - uv.x, 1.0 - uv.y);
-    else if (turns == 3) turned = vec2(uv.y, 1.0 - uv.x);
-    vec2 texel = (reference.xy + turned * reference.z) * (size - 1.0);
-#else
     vec2 texel = (reference.xy + uv * reference.z) * (size - 1.0);
-#endif
     ivec2 base = clamp(ivec2(floor(texel)), ivec2(0), ivec2(int(size) - 2));
     vec2 f = clamp(texel - vec2(base), 0.0, 1.0);
-#ifdef RADIAL_HEIGHTS
-    int layer = int(floor(reference.w));
-#else
     int layer = int(reference.w + 0.5);
-#endif
     base += ivec2(1); // One-sample gutter surrounds the point DEM.
     float h00 = texelFetch(elevations, ivec3(base, layer), 0).r;
     float h10 = texelFetch(elevations, ivec3(base + ivec2(1, 0), layer), 0).r;
@@ -185,12 +172,8 @@ vec3 sampledPosition(ivec2 h) {
 #else
     vec4 shape = texelFetch(shapes, ivec3(h, int(instPlace.w + 0.5)), 0);
 #endif
-#ifdef RADIAL_HEIGHTS
-    vec3 up = normalize(instRotation.xyz + shape.xyz);
-#else
     float longitude = (uv.x - 0.5) * instRotation.z;
     vec3 up = vec3(cos(shape.w) * cos(longitude), cos(shape.w) * sin(longitude), sin(shape.w));
-#endif
     return shape.xyz + up * heightIn(elevationAt(h), uv);
 }
 
@@ -217,32 +200,11 @@ vec3 positionAt(ivec2 h) {
 }
 
 #ifndef AMBIENT_ONLY
-#ifdef RADIAL_HEIGHTS
-// Position of a lattice point on the reference surface, relative to the tile centre.
-vec3 shapePosition(ivec2 h) {
-    return texelFetch(shapes, ivec3(h, int(instPlace.w + 0.5)), 0).xyz;
-}
-
-// Tangent of the reference surface per unit of tile coordinate, along the chord between two lattice points clamped to
-// the tile. A chord one-sided at a tile edge leans by half a cell of curvature: its projection on the tangent plane does
-// not, so both sides of an edge agree.
-vec3 surfaceTangent(ivec2 before, ivec2 after, vec3 normal) {
-    int last = steps();
-    ivec2 first = clamp(before, ivec2(0), ivec2(last));
-    ivec2 second = clamp(after, ivec2(0), ivec2(last));
-    vec3 chord = (shapePosition(second) - shapePosition(first)) * float(last) / float(second.x - first.x + second.y - first.y);
-    return chord - normal * dot(chord, normal);
-}
-#endif
 #endif
 
 // Rotation about the polar axis by the longitude of the tile centre.
 vec3 rotate(vec3 p) {
-#ifdef RADIAL_HEIGHTS
-    return p;
-#else
     return vec3(instRotation.x * p.x - instRotation.y * p.y, instRotation.y * p.x + instRotation.x * p.y, p.z);
-#endif
 }
 
 void main(void) {
@@ -262,20 +224,7 @@ void main(void) {
 #ifdef PROVIDER_NORMALS
     vNormalPage = instNormal;
 #endif
-#ifdef RADIAL_HEIGHTS
-    // The fragment stage computes the normal from the DEM: it needs the tangents of the reference surface and the page.
-    vec3 body = instRotation.xyz + shapePosition(h);
-    vec3 surfaceNormal = normalize(body * inverseRadiiSquared);
-    vUp = normalize(body);
-    vEast = surfaceTangent(h - ivec2(2, 0), h + ivec2(2, 0), surfaceNormal);
-    vSouth = surfaceTangent(h - ivec2(0, 2), h + ivec2(0, 2), surfaceNormal);
-    vTile = position.xy;
-    vPage = instElevation;
-    vEdgeN = instEdgeN;
-    vEdgeE = instEdgeE;
-    vEdgeS = instEdgeS;
-    vEdgeW = instEdgeW;
-#elif defined(RUNTIME_SELECTION)
+#ifdef RUNTIME_SELECTION
     vec2 uv = position.xy;
     float sine = surfaceInfo.x, cosine = surfaceInfo.y;
     float denominator = surfaceInfo.w;

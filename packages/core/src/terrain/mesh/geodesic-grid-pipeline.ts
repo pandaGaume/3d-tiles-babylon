@@ -236,25 +236,9 @@ export class BabylonGeodesicGridPipeline
                     // The tile starts at 0/0; its DEM gives the measured height range.
                     ...(heights && !Number.isNaN(heights.range.minimum) && !Number.isNaN(heights.range.maximum)
                         ? {
-                              tileBoundingVolume: () =>
-                                  this.tiling.boundingBox
-                                      ? {
-                                            box: this.tiling.boundingBox(
-                                                tileIdentity(context),
-                                                heights.range.minimum * this.verticalScale.value,
-                                                heights.range.maximum * this.verticalScale.value,
-                                            ) as never,
-                                        }
-                                      : { region: regionWithHeights(tileRegion(context), heights.range, this.verticalScale.value) },
-                              ...(this.tiling.boundingBox
-                                  ? {
-                                        tileHeightRange: () =>
-                                            [
-                                                heights.range.minimum * this.verticalScale.value,
-                                                heights.range.maximum * this.verticalScale.value,
-                                            ] as const,
-                                    }
-                                  : {}),
+                              tileBoundingVolume: () => ({
+                                  region: regionWithHeights(tileRegion(context), heights.range, this.verticalScale.value),
+                              }),
                           }
                         : {}),
                 });
