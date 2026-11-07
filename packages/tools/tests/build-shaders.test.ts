@@ -71,7 +71,11 @@ describe("generateShader", () => {
         expect(glsl.content.startsWith(GENERATED_HEADER)).toBe(true);
         expect(glsl.content).toContain("ShaderStore.ShadersStore[name] = shader;");
         expect(glsl.content).toContain("export const aVertexShader = { name, shader };");
-        expect(generateShader(join(root, "b.fragment.wgsl")).content).toContain("ShaderStore.ShadersStoreWGSL[name] = shader;");
+        const wgsl = generateShader(join(root, "b.fragment.wgsl"));
+        expect(wgsl.content).toContain("ShaderStore.ShadersStoreWGSL[name] = shader;");
+        // The store key is the one Babylon.js looks up; the export tells the two languages apart, as in Babylon.js.
+        expect(wgsl.content).toContain('const name = "bPixelShader";');
+        expect(wgsl.content).toContain("export const bPixelShaderWGSL = { name, shader };");
     });
 
     it("registers includes in the include store, and snippets nowhere", () => {

@@ -91,10 +91,13 @@ async function run(): Promise<void> {
     };
     const tileLabels = requiredElement("tile-labels", HTMLDivElement);
     const parameters = new URLSearchParams(window.location.search);
-    // `renderer=webgpu` runs the GLSL shaders, converted by Babylon, on its WebGPU engine where the browser supports it, WebGL otherwise.
+    // `renderer=webgpu` runs the WGSL shaders on the WebGPU engine of Babylon where the browser supports it, WebGL and GLSL otherwise.
+    // `antialias=0` removes multisampling, whose resolved edges depend on the hardware and the graphics API.
+    const antialias = parameters.get("antialias") !== "0";
     const { engine, renderer } = await createGeospatialRendererEngine(
         canvas,
         parameters.get("renderer") === "webgpu" ? "webgpu" : "webgl",
+        { webgl: { antialias }, webgpu: { antialias } },
     );
     const scene = createGeospatialScene(engine);
 
@@ -542,7 +545,7 @@ async function run(): Promise<void> {
     await Promise.all([driver.start(), imageryDriver?.start()]);
     monitor.setStartupMilliseconds(performance.now() - startupStartedAt);
     const coverage = `Global WebMercator coverage, ${source.tileset.root.children?.length ?? 0} roots, LOD ${TILE_METRICS.minLOD}..${TILE_METRICS.maxLOD}`;
-    status.textContent = `${coverage} | ${renderer === "webgpu" ? "GLSL converted for WebGPU" : "WebGL"}`;
+    status.textContent = `${coverage} | ${renderer === "webgpu" ? "WebGPU, WGSL" : "WebGL, GLSL"}`;
 
     // Objects of the example, for probes run from the browser console.
     (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = {
@@ -563,28 +566,28 @@ async function run(): Promise<void> {
 
     // The selection and its junctions are published before drawing this camera. Network work stays asynchronous.
     scene.onBeforeRenderObservable.add(() => terrain.beforeRender());
-    let rendering = false;
-    engine.runRenderLoop(() => {
-        if (rendering || scene.isDisposed) return;
-        rendering = true;
+    // Each frame waits for the selection of its camera, then draws inside a frame of the engine, which submits it:
+    // WebGPU only presents the canvas texture of a frame whose commands were submitted.
+    const frame = async (): Promise<void> => {
+        if (scene.isDisposed) return;
         camera.update();
-        void Promise.all([
-            driver.updateBeforeRender(),
-            imageryDriver?.updateBeforeRender(),
-        ])
-            .then(() => {
-                if (scene.isDisposed) return;
-                scene.render(false);
-                monitor.update();
-                terrain.afterRender();
-            })
-            .catch((error: unknown) =>
-                console.error("Mercator frame failed", error),
-            )
-            .finally(() => {
-                rendering = false;
-            });
-    });
+        try {
+            await Promise.all([
+                driver.updateBeforeRender(),
+                imageryDriver?.updateBeforeRender(),
+            ]);
+            if (scene.isDisposed) return;
+            engine.beginFrame();
+            scene.render(false);
+            engine.endFrame();
+            monitor.update();
+            terrain.afterRender();
+        } catch (error: unknown) {
+            console.error("Mercator frame failed", error);
+        }
+        requestAnimationFrame(() => void frame());
+    };
+    requestAnimationFrame(() => void frame());
 
     const resize = (): void => engine.resize();
     window.addEventListener("resize", resize);

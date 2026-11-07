@@ -56,7 +56,8 @@ The settings of the terrain are in `packages/core/src/terrain/terrain-config.jso
 | `imagery=none`             | Imagery draped on shaded grids: `debug` (default), `none`, or the name of a local module (see [Imagery](#imagery))                                    |
 | `kmax=4`                   | Deepest drape, in levels below the terrain tile                                                                                                       |
 | `subtrees=13/4252/2920/13` | Terrain subtrees with their own levels, `lod/x/y/maxLOD` separated by commas: from each root tile down, the grid stops at `maxLOD`, or refines deeper |
-| `renderer=webgpu`          | Runs the GLSL shaders, converted by Babylon.js, on its WebGPU engine where the browser supports it, WebGL otherwise. No shader is written for WebGPU  |
+| `renderer=webgpu`          | Runs the WGSL shaders on the WebGPU engine of Babylon.js where the browser supports it, WebGL and the GLSL shaders otherwise                          |
+| `antialias=0`              | Draws without multisampling, whose edges depend on the hardware and the graphics API: the renderer comparison uses it                                 |
 | `monitor=0`                | Disables the monitoring overlay and its counters                                                                                                      |
 
 The Mapzen attribution is displayed in the bottom-right corner.

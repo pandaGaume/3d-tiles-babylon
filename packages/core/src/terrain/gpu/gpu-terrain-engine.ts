@@ -1,6 +1,7 @@
 import type { Camera } from "@babylonjs/core/Cameras/camera.js";
 import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight.js";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
+import { ShaderLanguage } from "@babylonjs/core/Materials/shaderLanguage.js";
 import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
@@ -39,6 +40,8 @@ import { GpuRasterDrape } from "./gpu-raster-drape";
 import { GpuTerrainNormals } from "./gpu-terrain-normals";
 import { instancedGridPixelShader } from "./shaders/instancedGrid.fragment";
 import { instancedGridVertexShader } from "./shaders/instancedGrid.vertex";
+import { instancedGridPixelShaderWGSL } from "./shaders/wgsl/instancedGrid.fragment";
+import { instancedGridVertexShaderWGSL } from "./shaders/wgsl/instancedGrid.vertex";
 import { PickSurface } from "./pick-surface";
 import { terrainBodyFrame } from "./body-frame";
 
@@ -99,6 +102,8 @@ interface IPlacedInstance {
  * The legacy draped path, retained for the deferred cube adaptation, still combines the terrain and imagery cuts,
  * balances its instances, and reads their reference-surface shapes from texture arrays. Both paths use the same
  * activation and presentation ports and keep elevation sources independent of geometric tile addresses.
+ *
+ * Its shaders are written twice, in GLSL for WebGL and in WGSL for WebGPU, and compute the same values.
  */
 export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
     public readonly name = "gpu";
@@ -181,11 +186,15 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
             this.root,
         );
 
+        const wgsl = this.scene.getEngine().isWebGPU;
         this.material = new ShaderMaterial(
             "gpu-terrain",
             this.scene,
-            { vertexSource: instancedGridVertexShader.shader, fragmentSource: instancedGridPixelShader.shader },
+            wgsl
+                ? { vertexSource: instancedGridVertexShaderWGSL.shader, fragmentSource: instancedGridPixelShaderWGSL.shader }
+                : { vertexSource: instancedGridVertexShader.shader, fragmentSource: instancedGridPixelShader.shader },
             {
+                shaderLanguage: wgsl ? ShaderLanguage.WGSL : ShaderLanguage.GLSL,
                 attributes: ["position", ...(this.runtimeSelection ? RUNTIME_INSTANCE_ATTRIBUTES : INSTANCE_ATTRIBUTES)],
                 uniforms: [
                     "viewProjection",
