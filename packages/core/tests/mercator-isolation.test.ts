@@ -6,28 +6,59 @@ import { tileCenterEcef, tileCenterLongitude, webMercatorLatitude } from "../src
 import { instancedGridPixelShader } from "../src/terrain/gpu/shaders/instancedGrid.fragment";
 import { instancedGridVertexShader } from "../src/terrain/gpu/shaders/instancedGrid.vertex";
 
-/** A shader as compiled without a define: the `#ifdef` branches removed, the `#else` branches kept. */
-function withoutDefine(source: string, define: string): string {
-    const kept: string[] = [];
-    const stack: boolean[] = [];
-    for (const line of source.split("\n")) {
-        const trimmed = line.trim();
-        if (trimmed === `#ifdef ${define}`) stack.push(false);
-        else if (stack.length > 0 && trimmed === "#else") stack[stack.length - 1] = true;
-        else if (stack.length > 0 && trimmed === "#endif") stack.pop();
-        else if (stack.every(Boolean)) kept.push(line);
-    }
-    return kept.join("\n");
-}
+import { shaderBranch } from "./shader-branch";
 
 describe("the Web Mercator path", () => {
-    it("holds nothing of the cube in its shaders", () => {
+    it("keeps the legacy Web Mercator shader independent of radial and runtime geometry", () => {
         for (const shader of [instancedGridVertexShader.shader, instancedGridPixelShader.shader]) {
-            const mercator = withoutDefine(shader, "RADIAL_HEIGHTS");
-            for (const token of ["turns", "floor(reference", "inverseRadiiSquared", "vUp", "vEast", "shapePosition", "heightGradient"]) {
+            const mercator = shaderBranch(shader, ["IMAGERY"]);
+            for (const token of [
+                "turns",
+                "floor(reference",
+                "inverseRadiiSquared",
+                "vUp",
+                "vEast",
+                "shapePosition",
+                "heightGradient",
+                "mercatorSurface",
+                "vDrape",
+                "imageryTables",
+            ]) {
                 expect(mercator).not.toContain(token);
             }
         }
+    });
+
+    it("selects analytic runtime geometry without cube shapes or edge snapping", () => {
+        const vertex = shaderBranch(instancedGridVertexShader.shader, ["RUNTIME_SELECTION", "IMAGERY"]);
+        const fragment = shaderBranch(instancedGridPixelShader.shader, ["RUNTIME_SELECTION", "IMAGERY"]);
+        expect(vertex).toContain("vec3 local = surface + localUp * heightIn(elevationAt(h), position.xy);");
+        expect(vertex).toContain("vec3 mercatorSurface(");
+        for (const token of ["texelFetch(shapes", "shapePosition", "int turns", "0.5 * (sampledPosition", "vec3 local = positionAt(h);"])
+            expect(vertex).not.toContain(token);
+        expect(fragment).toContain("texelFetch(imageryTables");
+        expect(fragment).toContain("joinedGradient(vTile)");
+        expect(fragment).not.toContain("vec3 normal = normalize(vNormal);");
+    });
+
+    it("resolves nested conditions, elif and inactive parent branches", () => {
+        const source = `#if defined(A) || defined(B)
+outer
+#ifdef C
+nested
+#else
+fallback
+#endif
+#elif defined(D)
+alternative
+#else
+legacy
+#endif`;
+        expect(shaderBranch(source, ["A", "C"])).toBe("outer\nnested");
+        expect(shaderBranch(source, ["B"])).toBe("outer\nfallback");
+        expect(shaderBranch(source, ["D", "C"])).toBe("alternative");
+        expect(shaderBranch(source, ["C"])).toBe("legacy");
+        expect(() => shaderBranch("#if defined(A)\n", [])).toThrow("Unclosed");
     });
 
     it("computes the latitude of a shape exactly, without going through a float up vector", () => {

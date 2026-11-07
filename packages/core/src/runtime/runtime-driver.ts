@@ -29,9 +29,11 @@ export interface IBabylonRuntimeMotion {
 export interface IBabylonRuntimeDriverOptions {
     /** Camera submitted to the runtime. Defaults to the active camera of the scene when the driver starts. */
     camera?: Camera;
+    /** The owner awaits updateBeforeRender instead of following onAfterRender. */
+    manual?: boolean;
     /** Receives failures of frames processed after start. Defaults to `console.error`. */
     onError?: (error: unknown) => void;
-    /** Widens the frustum tiles are selected in; see {@link IEcefCameraFrameOptions.frustumMargin}. Defaults to 0. */
+    /** Periphery of the view, where tiles stay active; see {@link IEcefCameraFrameOptions.frustumMargin}. Defaults to 0. */
     frustumMargin?: number;
     /** Holds back new refinements while the camera moves fast. Without it, the threshold of the runtime is fixed. */
     motion?: IBabylonRuntimeMotion;
@@ -47,7 +49,8 @@ export class BabylonRuntimeDriver {
     private camera: Camera | undefined;
     private tracker: BabylonCameraChangeTracker | undefined;
     private observer: Observer<Scene> | null = null;
-    private framePending = false;
+    private frameOperation: Promise<void> | undefined;
+    private readonly manual: boolean;
     private disposed = false;
     private readonly onError: (error: unknown) => void;
     private readonly frameOptions: IEcefCameraFrameOptions;
@@ -60,6 +63,7 @@ export class BabylonRuntimeDriver {
         options: IBabylonRuntimeDriverOptions = {},
     ) {
         this.camera = options.camera;
+        this.manual = options.manual ?? false;
         this.motion = options.motion;
         this.frameOptions = options.frustumMargin === undefined ? {} : { frustumMargin: options.frustumMargin };
         this.onError = options.onError ?? ((error) => console.error("3D Tiles runtime frame failed", error));
@@ -85,25 +89,48 @@ export class BabylonRuntimeDriver {
         this.runtime.onCameraChanged(this.cameraFrame(), CameraChangeFlags.All);
         await this.runtime.processFrame();
         if (this.disposed) return;
-        this.observer = this.scene.onAfterRenderObservable.add(() => this.update());
+        if (!this.manual) this.observer = this.scene.onAfterRenderObservable.add(() => this.update());
     }
 
     /** Submits camera changes and starts a runtime frame when work is pending. Called after each rendered frame. */
     public update(): void {
         if (!this.tracker || this.disposed) return;
-        const changes = this.tracker.capture();
+        this.submitCamera();
+        if (this.frameOperation || !this.runtime.hasPendingWork) return;
+        void this.runFrame().catch((error: unknown) => {
+            if (!this.disposed) this.onError(error);
+        });
+    }
+
+    /**
+     * Publishes the ready selection for the current camera before its scene is drawn. The owner updates the camera
+     * first, awaits this method, and then calls scene.render(false), so its input is not applied twice.
+     */
+    public async updateBeforeRender(): Promise<void> {
+        if (!this.tracker || this.disposed) return;
+        this.submitCamera();
+        if (this.frameOperation) await this.frameOperation;
+        if (!this.disposed && this.runtime.hasPendingWork) await this.runFrame();
+    }
+
+    private submitCamera(): void {
+        const camera = this.camera!;
+        camera.getViewMatrix(true);
+        camera.getProjectionMatrix(true);
+        const changes = this.tracker!.capture();
         if (changes !== CameraChangeFlags.None) this.runtime.onCameraChanged(this.cameraFrame(), changes);
         this.followMotion();
-        if (this.framePending || !this.runtime.hasPendingWork) return;
-        this.framePending = true;
-        void this.runtime
+    }
+
+    private runFrame(): Promise<void> {
+        if (this.frameOperation) return this.frameOperation;
+        this.frameOperation = this.runtime
             .processFrame()
-            .catch((error: unknown) => {
-                if (!this.disposed) this.onError(error);
-            })
+            .then(() => undefined)
             .finally(() => {
-                this.framePending = false;
+                this.frameOperation = undefined;
             });
+        return this.frameOperation;
     }
 
     /** Stops following the render loop. The runtime itself is disposed by its owner. */

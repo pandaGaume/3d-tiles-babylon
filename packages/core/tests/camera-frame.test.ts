@@ -32,17 +32,23 @@ describe("createEcefCameraFrame", () => {
     // Half the view at a distance of 1000, along the horizontal axis.
     const half = 1000 * Math.tan(FOV / 2);
 
-    it("keeps the frustum of the view without a margin", () => {
+    it("keeps the frustum of the view, with or without a margin", () => {
         const planes = frame().frustumPlanes;
         expect(inside(planes, 0.99 * half, 1000)).toBe(true);
         expect(inside(planes, 1.01 * half, 1000)).toBe(false);
         expect(frame(0).frustumPlanes).toEqual(planes);
+        expect(frame(0.25).frustumPlanes).toEqual(planes);
     });
 
-    it("widens the frustum by the margin, on both sides", () => {
-        const planes = frame(0.25).frustumPlanes;
+    it("places the periphery at the margin, on both sides", () => {
+        const planes = frame(0.25).peripheryFrustumPlanes;
         expect(inside(planes, 1.2 * half, 1000)).toBe(true);
         expect(inside(planes, -1.2 * half, 1000)).toBe(true);
         expect(inside(planes, 1.3 * half, 1000)).toBe(false);
+    });
+
+    it("has no periphery without a margin", () => {
+        expect(frame().peripheryFrustumPlanes).toBeUndefined();
+        expect(frame(0).peripheryFrustumPlanes).toBeUndefined();
     });
 });

@@ -18,6 +18,8 @@ import { TERRAIN_CONFIG, TILE_METRICS, createCubeGridSource, cubeTiling, metadat
 import { instancedGridPixelShader } from "../src/terrain/gpu/shaders/instancedGrid.fragment";
 import { instancedGridVertexShader } from "../src/terrain/gpu/shaders/instancedGrid.vertex";
 
+import { shaderBranch } from "./shader-branch";
+
 const SIZE = 17;
 const MOON = new CubeTileSurface(ReferenceSurface.sphere(1737400));
 /** A relief that depends on the direction alone, so that any shifted or turned read shows. */
@@ -132,9 +134,24 @@ describe("shaders", () => {
         }
     });
 
-    it("only declares the fragment normal inputs with radial heights", () => {
-        expect(instancedGridPixelShader.shader).toContain("joinedGradient(vTile)");
-        expect(instancedGridPixelShader.shader).toMatch(/#ifdef RADIAL_HEIGHTS[\s\S]*#else\s+vec3 normal = normalize\(vNormal\);/);
+    it("keeps the cube on legacy shape geometry and enables DEM fragment normals in both supported paths", () => {
+        const cubeVertex = shaderBranch(instancedGridVertexShader.shader, ["RADIAL_HEIGHTS", "IMAGERY"]);
+        const cubeFragment = shaderBranch(instancedGridPixelShader.shader, ["RADIAL_HEIGHTS", "IMAGERY"]);
+        expect(cubeVertex).toContain("texelFetch(shapes");
+        expect(cubeVertex).toContain("vec3 local = positionAt(h);");
+        expect(cubeVertex).toContain("if (turns == 1) turned = vec2(1.0 - uv.y, uv.x);");
+        expect(cubeVertex).not.toContain("mercatorSurface");
+        expect(cubeFragment).not.toContain("imageryTables");
+        for (const defines of [["RADIAL_HEIGHTS"], ["RUNTIME_SELECTION"]]) {
+            const fragment = shaderBranch(instancedGridPixelShader.shader, defines);
+            expect(fragment).toContain("varying vec3 vUp;");
+            expect(fragment).toContain("joinedGradient(vTile)");
+            expect(fragment).not.toContain("vNormal");
+        }
+        const legacy = shaderBranch(instancedGridPixelShader.shader, []);
+        expect(legacy).toContain("vec3 normal = normalize(vNormal);");
+        expect(legacy).not.toContain("vUp");
+        expect(legacy).not.toContain("joinedGradient");
     });
 });
 

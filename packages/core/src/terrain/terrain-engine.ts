@@ -19,10 +19,16 @@ export interface ITerrainEngineInputs {
     labelLayer: HTMLElement;
     /** Shaded grids when false, level-coloured wireframes when true. */
     wireframe: boolean;
+    /** Geometry comes from the published runtime cut. The draped mode preserves existing integrations. */
+    geometrySelection?: "runtime" | "draped";
+    /** Uniform white ambient light, or terrain relief lighting. Defaults to terrain. */
+    lighting?: "terrain" | "ambient";
     /** DEM heights; without them, tiles lie on the minimum of their region. */
     elevation?: IGridElevationOptions;
     /** Imagery pages presented by the imagery runtime, draped on shaded tiles. */
     imageryPages?: BabylonRasterPages;
+    /** Optional Mapzen RGB provider normals. Mercator GPU uses them; CPU keeps its DEM-derived normals. */
+    normalPages?: BabylonRasterPages;
     junctions: JunctionPolicy;
     edgeHeights: EdgeHeightPolicy;
     /** How tiles lie on the body. Defaults to Web Mercator on WGS84. */

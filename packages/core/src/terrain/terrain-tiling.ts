@@ -79,6 +79,7 @@ export function webMercatorTiling(system: GeodeticSystem = GeodeticSystem.WGS84)
         surface: new WebMercatorTileSurface(system),
         topology: flatTileTopology({ wrapX: true }),
         radialHeights: false,
+        referenceRadii: [system.ellipsoid.semiMajorAxis, system.ellipsoid.semiMajorAxis, system.ellipsoid.semiMinorAxis],
         center: (address) => tileCenterEcef(address, system),
         rotation: (address) => tileCenterLongitude(address),
         shapeKey: (address) => `${address.lod}/${address.y}`,

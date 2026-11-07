@@ -25,7 +25,9 @@ export const INSTANCE_ATTRIBUTES = [
     "instCornerSE",
     "instCornerSW",
 ] as const;
-export type InstanceAttribute = (typeof INSTANCE_ATTRIBUTES)[number];
+/** Extra compact ellipsoid parameters used only by analytic Mercator instances. */
+export const RUNTIME_INSTANCE_ATTRIBUTES = [...INSTANCE_ATTRIBUTES, "instSurface", "instNormal"] as const;
+export type InstanceAttribute = (typeof RUNTIME_INSTANCE_ATTRIBUTES)[number];
 
 /**
  * The predefined grid of every instance, as in SpaceXR: `cells x cells` cells whose four edges are refined with a
@@ -41,8 +43,15 @@ export function refinedGridTopology(cells: number): IGridTopology {
     });
 }
 
-/** Floats per instance in the interleaved instance buffer. */
-const INSTANCE_STRIDE = INSTANCE_ATTRIBUTES.length * 4;
+/** The exact fine-side junction topology of a runtime-selected tile. */
+export function runtimeGridTopology(cells: number, coarserEdges: number): IGridTopology {
+    return createJunctionGridTopology(cells, cells, {
+        [TileNeighbor.N]: coarserEdges & 1 ? NeighborLod.Coarser : NeighborLod.Same,
+        [TileNeighbor.E]: coarserEdges & 2 ? NeighborLod.Coarser : NeighborLod.Same,
+        [TileNeighbor.S]: coarserEdges & 4 ? NeighborLod.Coarser : NeighborLod.Same,
+        [TileNeighbor.W]: coarserEdges & 8 ? NeighborLod.Coarser : NeighborLod.Same,
+    });
+}
 
 /**
  * One predefined grid drawn once per instance: a Babylon mesh drawn with `forcedInstanceCount`, whose instance
@@ -64,6 +73,7 @@ export class InstancedGrid {
         name: string,
         topology: IGridTopology,
         material: Material,
+        private readonly attributes: readonly InstanceAttribute[] = INSTANCE_ATTRIBUTES,
     ) {
         this.mesh = new Mesh(name, scene);
         const positions = new Float32Array((topology.coordinates.length / 2) * 3);
@@ -91,7 +101,7 @@ export class InstancedGrid {
 
     /** Bytes of the instance buffer. */
     public get gpuBytes(): number {
-        return this.capacity * INSTANCE_ATTRIBUTES.length * 16;
+        return this.capacity * this.attributes.length * 16;
     }
 
     /** Values of an attribute, four floats per instance, valid up to {@link count} instances. */
@@ -111,17 +121,17 @@ export class InstancedGrid {
     public upload(...names: readonly InstanceAttribute[]): void {
         for (const name of names) {
             const values = this.data.get(name)!;
-            const start = INSTANCE_ATTRIBUTES.indexOf(name) * 4;
+            const start = this.attributes.indexOf(name) * 4;
             for (let instance = 0; instance < this.instances; instance++) {
                 const from = instance * 4;
-                const to = instance * INSTANCE_STRIDE + start;
+                const to = instance * (this.attributes.length * 4) + start;
                 this.interleaved[to] = values[from]!;
                 this.interleaved[to + 1] = values[from + 1]!;
                 this.interleaved[to + 2] = values[from + 2]!;
                 this.interleaved[to + 3] = values[from + 3]!;
             }
         }
-        this.buffer?.updateDirectly(this.interleaved, 0);
+        this.buffer?.updateDirectly(this.interleaved.subarray(0, this.instances * (this.attributes.length * 4)), 0);
     }
 
     public dispose(): void {
@@ -131,20 +141,20 @@ export class InstancedGrid {
     }
 
     private reserve(capacity: number): void {
-        for (const name of INSTANCE_ATTRIBUTES) {
+        for (const name of this.attributes) {
             const data = new Float32Array(capacity * 4);
             const previous = this.data.get(name);
             if (previous) data.set(previous);
             this.data.set(name, data);
         }
-        const interleaved = new Float32Array(capacity * INSTANCE_STRIDE);
+        const interleaved = new Float32Array(capacity * (this.attributes.length * 4));
         interleaved.set(this.interleaved);
         this.interleaved = interleaved;
         for (const vertexBuffer of this.vertexBuffers.splice(0)) vertexBuffer.dispose();
         this.buffer?.dispose();
-        this.buffer = new Buffer(this.scene.getEngine(), interleaved, true, INSTANCE_STRIDE, false, true, false, 1);
-        INSTANCE_ATTRIBUTES.forEach((name, index) => {
-            const vertexBuffer = this.buffer!.createVertexBuffer(name, index * 4, 4, INSTANCE_STRIDE, true, false, 1);
+        this.buffer = new Buffer(this.scene.getEngine(), interleaved, true, this.attributes.length * 4, false, true, false, 1);
+        this.attributes.forEach((name, index) => {
+            const vertexBuffer = this.buffer!.createVertexBuffer(name, index * 4, 4, this.attributes.length * 4, true, false, 1);
             this.vertexBuffers.push(vertexBuffer);
             this.mesh.setVerticesBuffer(vertexBuffer);
         });

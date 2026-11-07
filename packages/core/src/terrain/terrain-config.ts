@@ -13,6 +13,8 @@ export interface ITerrainConfig {
         screenSpaceError: number;
         /** A refined tile coarsens once its error drops below `1 - hysteresis` times the threshold. */
         hysteresis: number;
+        /** Periphery of the view where tiles stay active, as a fraction of the view. */
+        frustumMargin: number;
         /** Time a refined tile waits before coarsening. */
         coarseningDelayMilliseconds: number;
         maxConcurrentLoads: number;
@@ -39,6 +41,8 @@ export interface ITerrainConfig {
         abortDelayMilliseconds: number;
         /** How levels below the source are generated. */
         interpolation: RasterInterpolation;
+        /** Generated DEM levels below the physical source, independently of the geometry limit. Zero samples source ancestors. */
+        generatedLevels: number;
     };
     imagery: {
         /** Texels per side of an imagery tile. Its geometric error is one texel. */
@@ -46,12 +50,20 @@ export interface ITerrainConfig {
         minLOD: number;
         maxLOD: number;
         screenSpaceError: number;
+        /** Imagery tiles per side of one physical DEM tile, independently of generated heights and geometry. */
+        demSubdivision: 2 | 4 | 8;
         contentCacheEntries: number;
         /** Deepest drape below a terrain tile of the mesh engine: up to `4^maxDrapeDepth` imagery pages per tile. */
         maxDrapeDepth: number;
     };
     objects: {
         screenSpaceError: number;
+    };
+    orbitalCamera: {
+        /** Shortest distance from the camera to the point it orbits, in metres. */
+        radiusMin: number;
+        /** Lowest height of the camera above the terrain, in metres. */
+        altitudeMin: number;
     };
     mercator: {
         minLOD: number;
@@ -60,8 +72,6 @@ export interface ITerrainConfig {
     cube: {
         /** Budgets of the runtime cache follow what the view uses, times this factor. */
         workingSetFactor: number;
-        /** Tiles are selected in a frustum wider than the view by this fraction. */
-        frustumMargin: number;
         /** Deepest DEM level of the synthetic Moon. */
         syntheticDemMaxLOD: number;
     };

@@ -14,6 +14,9 @@ export interface IBenchPerformance {
     /** Refinements of the frames, and what the passes of the balance tried. */
     refines?: number;
     refineAttempts?: number;
+    /** Rebuilds of the instances of the GPU engine along the path, and those that gave the cut they had. */
+    rebuilds?: number;
+    identicalRebuilds?: number;
     terrainCpuMs: number;
     renderCpuMs: number;
     runtimeFrameMs: number;
@@ -44,9 +47,13 @@ export interface IBenchLodActivity {
     returns: number;
     /** The same within 2 seconds. A camera turning one way does not bring back a tile it has just left. */
     quickReturns: number;
+    /** Those the camera sees when they return: the others change nothing on screen. */
+    quickReturnsInView?: number;
     tilesReturning: number;
     mostReturns?: number;
     mostReturningTile?: string;
+    /** What happened to that tile along the path. */
+    mostReturningHistory?: string[];
     /** Tiles shown or hidden over 15 runtime frames asked for, the camera still and nothing pending. */
     changesAtRest: number;
     /** Tiles presented once settled. */
@@ -106,6 +113,8 @@ const COLUMNS: ReadonlyArray<readonly [string, (result: IBenchResult) => number 
     ["p95 ms", (r) => r.performance?.frameMsP95, true],
     ["p99 ms", (r) => r.performance?.frameMsP99, true],
     ["terrain ms", (r) => r.performance?.terrainCpuMs, true],
+    ["rebuilds", (r) => r.performance?.rebuilds, true],
+    ["identical", (r) => r.performance?.identicalRebuilds, true],
     ["render ms", (r) => r.performance?.renderCpuMs, true],
     ["gpu ms", (r) => r.performance?.gpuMs, true],
     ["instances", (r) => r.performance?.instances, true],

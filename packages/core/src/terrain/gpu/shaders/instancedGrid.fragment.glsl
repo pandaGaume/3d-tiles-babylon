@@ -4,10 +4,20 @@ precision highp float;
 precision highp sampler2DArray;
 
 varying vec3 vImagery;
-#ifdef RADIAL_HEIGHTS
+#ifdef RUNTIME_SELECTION
+varying vec4 vDrape;
+uniform sampler2DArray imageryTables;
+#endif
+#ifndef AMBIENT_ONLY
+#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
 varying vec2 vTile;
 varying vec4 vPage;
 varying vec3 vUp;
+#ifdef PROVIDER_NORMALS
+varying vec4 vNormalPage;
+uniform sampler2DArray normalTextures;
+uniform float normalSize;
+#endif
 varying vec3 vEast;
 varying vec3 vSouth;
 varying vec4 vEdgeN;
@@ -20,8 +30,10 @@ uniform float cells;
 #else
 varying vec3 vNormal;
 #endif
+#endif
 
 uniform vec3 baseColor;
+#ifndef AMBIENT_ONLY
 // Directional light: direction towards the light, colour times intensity.
 uniform vec3 sunDirection;
 uniform vec3 sunColor;
@@ -29,12 +41,14 @@ uniform vec3 sunColor;
 uniform vec3 skyDirection;
 uniform vec3 skyColor;
 uniform vec3 groundColor;
+#endif
 #ifdef IMAGERY
 uniform sampler2DArray imagery;
 uniform float imagerySize;
 #endif
 
-#ifdef RADIAL_HEIGHTS
+#ifndef AMBIENT_ONLY
+#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
 // Central differences include the one-sample gutter copied from resident neighbour DEMs.
 vec2 sampleGradient(ivec2 p, int layer) {
     p += ivec2(1);
@@ -66,6 +80,21 @@ vec2 heightGradient(vec4 page, vec2 uv) {
     return gradient;
 }
 
+#ifdef PROVIDER_NORMALS
+// Provider pixels encode tangent-space east, north and up as 128 * (component + 1). Alpha is not opacity.
+bool providerNormal(out vec3 result) {
+    if (vNormalPage.w < 0.0) return false;
+    vec2 page = vNormalPage.xy + vTile * vNormalPage.z;
+    vec2 uv = (clamp(page, 0.0, 1.0) * (normalSize - 1.0) + 0.5) / normalSize;
+    vec3 tangent = textureLod(normalTextures, vec3(uv, floor(vNormalPage.w + 0.5)), 0.0).rgb * (255.0 / 128.0) - 1.0;
+    if (dot(tangent, tangent) < 0.00000001) return false;
+    tangent = normalize(tangent);
+    tangent.xy *= verticalScale;
+    result = normalize(normalize(vEast) * tangent.x - normalize(vSouth) * tangent.y + normalize(vUp) * tangent.z);
+    return true;
+}
+#endif
+
 // Geometry joins the coarsest DEM on an edge. Its normal must follow that same surface,
 // fading into the interior over one grid cell instead of switching DEM gradients abruptly.
 vec2 joinedGradient(vec2 uv) {
@@ -82,10 +111,24 @@ vec2 joinedGradient(vec2 uv) {
     return gradient;
 }
 #endif
+#endif
 
 void main(void) {
     vec3 albedo = baseColor;
 #ifdef IMAGERY
+#ifdef RUNTIME_SELECTION
+    if (vDrape.w >= 0.0) {
+        float side = exp2(vDrape.z);
+        vec2 tile = clamp(vDrape.xy, 0.0, 1.0);
+        vec2 cell = clamp(floor(tile * side), 0.0, side - 1.0);
+        vec4 entry = texelFetch(imageryTables, ivec3(ivec2(cell), int(vDrape.w + 0.5)), 0);
+        if (entry.x >= 0.0) {
+            vec2 page = entry.yz + (tile * side - cell) * entry.w;
+            vec2 uv = (clamp(page, 0.0, 1.0) * (imagerySize - 1.0) + 0.5) / imagerySize;
+            albedo = textureLod(imagery, vec3(uv, floor(entry.x + 0.5)), 0.0).rgb;
+        }
+    }
+#else
     if (vImagery.z >= 0.0) {
         // Point registration: page coordinate t lies at the centre of texel t * (size - 1).
         vec2 uv = (clamp(vImagery.xy, 0.0, 1.0) * (imagerySize - 1.0) + 0.5) / imagerySize;
@@ -93,17 +136,30 @@ void main(void) {
         albedo = textureLod(imagery, vec3(uv, floor(vImagery.z + 0.5)), 0.0).rgb;
     }
 #endif
-#ifdef RADIAL_HEIGHTS
+#endif
+#ifdef AMBIENT_ONLY
+    // Uniform white ambient illumination preserves the imagery without computing a terrain normal.
+    gl_FragColor = vec4(albedo, 1.0);
+#else
+#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
     // The normal of the displaced surface reads the DEM at each pixel, not the vertices of the grid: relief finer than a
     // cell shows, and both sides of a tile edge read the same slope. Its page must hold the samples of the source: levels
     // interpolated below it have a slope constant by parts, which shows as a checkerboard.
+    vec3 normal;
+#ifdef PROVIDER_NORMALS
+    if (!providerNormal(normal)) {
+#endif
     vec3 up = normalize(vUp);
     vec2 gradient = joinedGradient(vTile);
-    vec3 normal = normalize(cross(vEast + up * gradient.x, -(vSouth + up * gradient.y)));
+    normal = normalize(cross(vEast + up * gradient.x, -(vSouth + up * gradient.y)));
+#ifdef PROVIDER_NORMALS
+    }
+#endif
 #else
     vec3 normal = normalize(vNormal);
 #endif
     // The lighting of the Babylon standard material, without specular.
     vec3 light = sunColor * max(dot(normal, sunDirection), 0.0) + mix(groundColor, skyColor, 0.5 * dot(normal, skyDirection) + 0.5);
     gl_FragColor = vec4(clamp(albedo * light, 0.0, 1.0), 1.0);
+#endif
 }

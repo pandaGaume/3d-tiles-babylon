@@ -68,11 +68,13 @@ export class BabylonRasterPages {
      *
      * @returns The page, or `undefined` when the pyramid has no raster there or the texture array is full.
      */
-    public async load(address: ITileAddress): Promise<IBabylonRasterPage | undefined> {
+    public async load(address: ITileAddress, signal?: AbortSignal): Promise<IBabylonRasterPage | undefined> {
+        signal?.throwIfAborted();
         const existing = this.resident.get(address);
         if (existing !== undefined) return { address, layer: existing };
         if (address.lod > this.pyramid.maxLOD) return undefined;
-        const region = await this.pyramid.load(address);
+        const region = await this.pyramid.load(address, signal);
+        signal?.throwIfAborted();
         if (!region) return undefined;
         const again = this.resident.get(address);
         if (again !== undefined) return { address, layer: again };

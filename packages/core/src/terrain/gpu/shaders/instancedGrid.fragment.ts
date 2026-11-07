@@ -5,10 +5,20 @@ const name = "instancedGridPixelShader";
 const shader = `precision highp float;
 precision highp sampler2DArray;
 varying vec3 vImagery;
-#ifdef RADIAL_HEIGHTS
+#ifdef RUNTIME_SELECTION
+varying vec4 vDrape;
+uniform sampler2DArray imageryTables;
+#endif
+#ifndef AMBIENT_ONLY
+#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
 varying vec2 vTile;
 varying vec4 vPage;
 varying vec3 vUp;
+#ifdef PROVIDER_NORMALS
+varying vec4 vNormalPage;
+uniform sampler2DArray normalTextures;
+uniform float normalSize;
+#endif
 varying vec3 vEast;
 varying vec3 vSouth;
 varying vec4 vEdgeN;
@@ -21,17 +31,21 @@ uniform float cells;
 #else
 varying vec3 vNormal;
 #endif
+#endif
 uniform vec3 baseColor;
+#ifndef AMBIENT_ONLY
 uniform vec3 sunDirection;
 uniform vec3 sunColor;
 uniform vec3 skyDirection;
 uniform vec3 skyColor;
 uniform vec3 groundColor;
+#endif
 #ifdef IMAGERY
 uniform sampler2DArray imagery;
 uniform float imagerySize;
 #endif
-#ifdef RADIAL_HEIGHTS
+#ifndef AMBIENT_ONLY
+#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
 vec2 sampleGradient(ivec2 p, int layer) {
 p += ivec2(1);
 float west = texelFetch(elevations, ivec3(p - ivec2(1, 0), layer), 0).r;
@@ -59,6 +73,19 @@ else if (turns == 2) gradient = -gradient;
 else if (turns == 3) gradient = vec2(-gradient.y, gradient.x);
 return gradient;
 }
+#ifdef PROVIDER_NORMALS
+bool providerNormal(out vec3 result) {
+if (vNormalPage.w < 0.0) return false;
+vec2 page = vNormalPage.xy + vTile * vNormalPage.z;
+vec2 uv = (clamp(page, 0.0, 1.0) * (normalSize - 1.0) + 0.5) / normalSize;
+vec3 tangent = textureLod(normalTextures, vec3(uv, floor(vNormalPage.w + 0.5)), 0.0).rgb * (255.0 / 128.0) - 1.0;
+if (dot(tangent, tangent) < 0.00000001) return false;
+tangent = normalize(tangent);
+tangent.xy *= verticalScale;
+result = normalize(normalize(vEast) * tangent.x - normalize(vSouth) * tangent.y + normalize(vUp) * tangent.z);
+return true;
+}
+#endif
 vec2 joinedGradient(vec2 uv) {
 vec2 gradient = heightGradient(vPage, uv);
 float width = 1.0 / cells;
@@ -73,23 +100,49 @@ gradient = mix(heightGradient(vEdgeW, uv), gradient, smoothstep(0.0, width, uv.x
 return gradient;
 }
 #endif
+#endif
 void main(void) {
 vec3 albedo = baseColor;
 #ifdef IMAGERY
+#ifdef RUNTIME_SELECTION
+if (vDrape.w >= 0.0) {
+float side = exp2(vDrape.z);
+vec2 tile = clamp(vDrape.xy, 0.0, 1.0);
+vec2 cell = clamp(floor(tile * side), 0.0, side - 1.0);
+vec4 entry = texelFetch(imageryTables, ivec3(ivec2(cell), int(vDrape.w + 0.5)), 0);
+if (entry.x >= 0.0) {
+vec2 page = entry.yz + (tile * side - cell) * entry.w;
+vec2 uv = (clamp(page, 0.0, 1.0) * (imagerySize - 1.0) + 0.5) / imagerySize;
+albedo = textureLod(imagery, vec3(uv, floor(entry.x + 0.5)), 0.0).rgb;
+}
+}
+#else
 if (vImagery.z >= 0.0) {
 vec2 uv = (clamp(vImagery.xy, 0.0, 1.0) * (imagerySize - 1.0) + 0.5) / imagerySize;
 albedo = textureLod(imagery, vec3(uv, floor(vImagery.z + 0.5)), 0.0).rgb;
 }
 #endif
-#ifdef RADIAL_HEIGHTS
+#endif
+#ifdef AMBIENT_ONLY
+gl_FragColor = vec4(albedo, 1.0);
+#else
+#if defined(RADIAL_HEIGHTS) || defined(RUNTIME_SELECTION)
+vec3 normal;
+#ifdef PROVIDER_NORMALS
+if (!providerNormal(normal)) {
+#endif
 vec3 up = normalize(vUp);
 vec2 gradient = joinedGradient(vTile);
-vec3 normal = normalize(cross(vEast + up * gradient.x, -(vSouth + up * gradient.y)));
+normal = normalize(cross(vEast + up * gradient.x, -(vSouth + up * gradient.y)));
+#ifdef PROVIDER_NORMALS
+}
+#endif
 #else
 vec3 normal = normalize(vNormal);
 #endif
 vec3 light = sunColor * max(dot(normal, sunDirection), 0.0) + mix(groundColor, skyColor, 0.5 * dot(normal, skyDirection) + 0.5);
 gl_FragColor = vec4(clamp(albedo * light, 0.0, 1.0), 1.0);
+#endif
 }`;
 ShaderStore.ShadersStore[name] = shader;
 /** @internal */

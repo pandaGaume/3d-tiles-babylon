@@ -11,6 +11,12 @@ window.__TERRAIN_BENCH__ = (() => {
             if (camera.frame) camera.frame.rotateHeading(path.turn * dt);
             else camera.yaw = (camera.yaw ?? 0) + path.turn * dt;
         }
+        if (path.sway) {
+            const { amplitude, rate } = path.sway;
+            const turn = amplitude * (Math.sin(rate * t) - Math.sin(rate * (t - dt)));
+            if (camera.frame) camera.frame.rotateHeading(turn);
+            else camera.yaw = (camera.yaw ?? 0) + turn;
+        }
         if (path.zoom) {
             const { nearest, farthest, rate } = path.zoom;
             const span = Math.log(farthest / nearest);
@@ -51,7 +57,22 @@ window.__TERRAIN_BENCH__ = (() => {
     async function measured(work) {
         const { terrain, scene, runtime } = example();
         const gl = scene.getEngine()._gl;
-        const m = { frames: 0, terrainMs: 0, renderMs: 0, runtimeMs: 0, runtimeFrames: 0, uploadBytes: 0, uploadCalls: 0, triangles: 0, drawCalls: 0, gpuMs: 0, gpuSamples: 0 };
+        const m = {
+            frames: 0,
+            terrainMs: 0,
+            renderMs: 0,
+            runtimeMs: 0,
+            runtimeFrames: 0,
+            uploadBytes: 0,
+            uploadCalls: 0,
+            triangles: 0,
+            drawCalls: 0,
+            gpuMs: 0,
+            gpuSamples: 0,
+            rebuilds: 0,
+            identicalRebuilds: 0,
+            probeMs: 0,
+        };
         const restore = [];
         const wrap = (owner, name, around) => {
             const original = owner[name];
@@ -67,11 +88,31 @@ window.__TERRAIN_BENCH__ = (() => {
                 m.uploadBytes += bytes(args);
                 return original.apply(this, args);
             };
-        wrap(gl, "bufferData", countUpload((a) => size(a[1])));
-        wrap(gl, "bufferSubData", countUpload((a) => size(a[2])));
-        wrap(gl, "texSubImage2D", countUpload((a) => size(a[a.length - 1])));
-        wrap(gl, "texSubImage3D", countUpload((a) => size(a[a.length - 1])));
-        wrap(gl, "texImage3D", countUpload((a) => size(a[a.length - 1])));
+        wrap(
+            gl,
+            "bufferData",
+            countUpload((a) => size(a[1])),
+        );
+        wrap(
+            gl,
+            "bufferSubData",
+            countUpload((a) => size(a[2])),
+        );
+        wrap(
+            gl,
+            "texSubImage2D",
+            countUpload((a) => size(a[a.length - 1])),
+        );
+        wrap(
+            gl,
+            "texSubImage3D",
+            countUpload((a) => size(a[a.length - 1])),
+        );
+        wrap(
+            gl,
+            "texImage3D",
+            countUpload((a) => size(a[a.length - 1])),
+        );
         wrap(gl, "drawElementsInstanced", function (original, args) {
             m.drawCalls++;
             m.triangles += (args[1] / 3) * args[4];
@@ -90,6 +131,28 @@ window.__TERRAIN_BENCH__ = (() => {
                 return result;
             };
         wrap(terrain, "beforeRender", timed("terrainMs"));
+        // Rebuilds of the GPU engine, and those giving the cut they had: the time of this comparison is taken out of the terrain.
+        if (terrain.rebuild) {
+            const cutOf = () =>
+                terrain.placed
+                    .map(
+                        ({ instance: { address, finerEdges } }) =>
+                            `${address.face ?? ""}/${address.lod}/${address.x}/${address.y}:${finerEdges}`,
+                    )
+                    .sort()
+                    .join("|");
+            let lastCut = cutOf();
+            wrap(terrain, "rebuild", function (original, args) {
+                const result = original.apply(this, args);
+                const start = performance.now();
+                const cut = cutOf();
+                m.rebuilds++;
+                if (cut === lastCut) m.identicalRebuilds++;
+                lastCut = cut;
+                m.probeMs += performance.now() - start;
+                return result;
+            });
+        }
         wrap(scene, "render", timed("renderMs"));
         wrap(runtime, "processFrame", function (original, args) {
             const start = performance.now();
@@ -122,7 +185,13 @@ window.__TERRAIN_BENCH__ = (() => {
     function cutChanges() {
         const metrics = example().runtime.instrumentation?.snapshot().metrics ?? {};
         const count = (name) => metrics[name]?.count ?? 0;
-        return { entered: count("cut.entered"), left: count("cut.left"), refines: count("tile.refine"), attempts: count("tile.refine.attempt"), cancelled: count("content.cancelled") };
+        return {
+            entered: count("cut.entered"),
+            left: count("cut.left"),
+            refines: count("tile.refine"),
+            attempts: count("tile.refine.attempt"),
+            cancelled: count("content.cancelled"),
+        };
     }
 
     /** Performance of a path, without reading pixels back. */
@@ -155,7 +224,9 @@ window.__TERRAIN_BENCH__ = (() => {
             cancelledLoads: cutAfter.cancelled - cutBefore.cancelled,
             refineAttempts: cutAfter.attempts - cutBefore.attempts,
             refines: cutAfter.refines - cutBefore.refines,
-            terrainCpuMs: round(m.terrainMs / frames),
+            rebuilds: m.rebuilds,
+            identicalRebuilds: m.identicalRebuilds,
+            terrainCpuMs: round((m.terrainMs - m.probeMs) / frames),
             renderCpuMs: round(m.renderMs / frames),
             runtimeFrameMs: round(m.runtimeMs / Math.max(1, m.runtimeFrames), 1),
             gpuMs: m.gpuSamples ? round(m.gpuMs / m.gpuSamples) : null,
@@ -188,7 +259,10 @@ window.__TERRAIN_BENCH__ = (() => {
                 let terrainSeen = false;
                 for (let y = h - 1; y >= 0; y--) {
                     const i = (y * w + x) * 4;
-                    const isBackground = Math.abs(buffer[i] - background[0]) < 5 && Math.abs(buffer[i + 1] - background[1]) < 5 && Math.abs(buffer[i + 2] - background[2]) < 5;
+                    const isBackground =
+                        Math.abs(buffer[i] - background[0]) < 5 &&
+                        Math.abs(buffer[i + 1] - background[1]) < 5 &&
+                        Math.abs(buffer[i + 2] - background[2]) < 5;
                     if (!isBackground) terrainSeen = true;
                     else if (terrainSeen) holes++;
                 }
@@ -247,7 +321,11 @@ window.__TERRAIN_BENCH__ = (() => {
                     worst = Math.max(worst, gap);
                     if (inView({ x, y, z }) && gap > worstVisible) {
                         worstVisible = gap;
-                        worstPair = { gap, a: describeVertex(handle, u, v, height), b: describeVertex(known.handle, known.u, known.v, known.height) };
+                        worstPair = {
+                            gap,
+                            a: describeVertex(handle, u, v, height),
+                            b: describeVertex(known.handle, known.u, known.v, known.height),
+                        };
                     }
                 } else if (!known) points.set(key, { handle, u, v, height, x, y, z });
             }
@@ -266,10 +344,22 @@ window.__TERRAIN_BENCH__ = (() => {
         const last = terrain.elevations.size - 1;
         const verticalScale = terrain.verticalScale.value;
         const pages = new Map();
-        for (const page of terrain.elevations.pages.values()) pages.set(page.layer, terrain.elevation?.pyramid.rasters.stitchedGrid(page.address));
+        for (const page of terrain.elevations.pages.values())
+            pages.set(page.layer, terrain.elevation?.pyramid.rasters.stitchedGrid(page.address));
         const attribute = (name) => terrain.grid.attribute(name);
         const references = {};
-        for (const name of ["instElevation", "instEdgeN", "instEdgeE", "instEdgeS", "instEdgeW", "instCornerNW", "instCornerNE", "instCornerSE", "instCornerSW"]) references[name] = attribute(name);
+        for (const name of [
+            "instElevation",
+            "instEdgeN",
+            "instEdgeE",
+            "instEdgeS",
+            "instEdgeW",
+            "instCornerNW",
+            "instCornerNE",
+            "instCornerSE",
+            "instCornerSW",
+        ])
+            references[name] = attribute(name);
         const reference = (name, index) => {
             const a = references[name];
             return [a[index * 4], a[index * 4 + 1], a[index * 4 + 2], a[index * 4 + 3]];
@@ -315,8 +405,10 @@ window.__TERRAIN_BENCH__ = (() => {
         const BITS = { N: 1, E: 2, S: 4, W: 8 };
         const height = (entry, hx, hy) => {
             const finer = (edge) => (entry.instance.finerEdges & BITS[edge]) !== 0;
-            if (((hy === 0 && !finer("N")) || (hy === steps && !finer("S"))) && hx & 1) return 0.5 * (sampled(entry.index, hx - 1, hy) + sampled(entry.index, hx + 1, hy));
-            if (((hx === steps && !finer("E")) || (hx === 0 && !finer("W"))) && hy & 1) return 0.5 * (sampled(entry.index, hx, hy - 1) + sampled(entry.index, hx, hy + 1));
+            if (((hy === 0 && !finer("N")) || (hy === steps && !finer("S"))) && hx & 1)
+                return 0.5 * (sampled(entry.index, hx - 1, hy) + sampled(entry.index, hx + 1, hy));
+            if (((hx === steps && !finer("E")) || (hx === 0 && !finer("W"))) && hy & 1)
+                return 0.5 * (sampled(entry.index, hx, hy - 1) + sampled(entry.index, hx, hy + 1));
             return sampled(entry.index, hx, hy);
         };
         const surface = terrain.tiling.surface;
@@ -344,7 +436,11 @@ window.__TERRAIN_BENCH__ = (() => {
                         injected = true;
                     }
                     const up = surface.up(instance.address, hx / steps, hy / steps);
-                    const position = { x: p.x + up.x * h * verticalScale, y: p.y + up.y * h * verticalScale, z: p.z + up.z * h * verticalScale };
+                    const position = {
+                        x: p.x + up.x * h * verticalScale,
+                        y: p.y + up.y * h * verticalScale,
+                        z: p.z + up.z * h * verticalScale,
+                    };
                     if (known && known.index !== index) {
                         shared++;
                         const gap = Math.hypot(known.position.x - position.x, known.position.y - position.y, known.position.z - position.z);
@@ -361,7 +457,17 @@ window.__TERRAIN_BENCH__ = (() => {
                                 coarser: i.coarserEdges,
                                 demOfTerrain: terrain.elevation?.pyramid.rasters.areaOf(i.terrain).ancestor,
                             });
-                            worstPair = { gap, a: describe(instance), aLattice: [hx, hy], aHeight: h, b: describe(other), bLattice: known.lattice, bHeight: known.h, aReference: elevationAt(index, hx, hy), bReference: elevationAt(known.index, known.lattice[0], known.lattice[1]) };
+                            worstPair = {
+                                gap,
+                                a: describe(instance),
+                                aLattice: [hx, hy],
+                                aHeight: h,
+                                b: describe(other),
+                                bLattice: known.lattice,
+                                bHeight: known.h,
+                                aReference: elevationAt(index, hx, hy),
+                                bReference: elevationAt(known.index, known.lattice[0], known.lattice[1]),
+                            };
                         }
                     } else if (!known) points.set(key, { index, h, position, lattice: [hx, hy] });
                 }
@@ -379,10 +485,20 @@ window.__TERRAIN_BENCH__ = (() => {
         const key = ({ face, lod, x, y }) => `${face ?? 0}/${lod}/${x}/${y}`;
         const hiddenAt = new Map();
         const returnsByTile = new Map();
+        const history = new Map();
+        const started = performance.now();
+        const remember = (tile, change, node) => {
+            if (!history.has(tile)) history.set(tile, []);
+            const refining = example().runtime.refiningNodes;
+            const state = (n) =>
+                n ? `${n.visible ? "visible" : n.active ? "active" : "inactive"}${refining.has(n.id) ? " refining" : ""}` : "none";
+            history.get(tile).push(`${Math.round(performance.now() - started)} ms ${change}, ${state(node)}, parent ${state(node.parent)}`);
+        };
         let shown = 0;
         let hidden = 0;
         let returns = 0;
         let quickReturns = 0;
+        let quickReturnsInView = 0;
         const present = terrain.present;
         const hide = terrain.hide;
         terrain.present = function (context) {
@@ -390,12 +506,16 @@ window.__TERRAIN_BENCH__ = (() => {
                 if (handle.presented) continue;
                 shown++;
                 const tile = key(handle.identity);
+                remember(tile, "shown", context.tile);
                 const left = hiddenAt.get(tile);
                 if (left === undefined) continue;
                 hiddenAt.delete(tile);
                 returns++;
                 returnsByTile.set(tile, (returnsByTile.get(tile) ?? 0) + 1);
-                if (performance.now() - left < QUICK_MILLISECONDS) quickReturns++;
+                if (performance.now() - left < QUICK_MILLISECONDS) {
+                    quickReturns++;
+                    if (context.tile.visible) quickReturnsInView++;
+                }
             }
             return present.call(this, context);
         };
@@ -403,7 +523,9 @@ window.__TERRAIN_BENCH__ = (() => {
             for (const { handle } of context.resources) {
                 if (!handle.presented) continue;
                 hidden++;
-                hiddenAt.set(key(handle.identity), performance.now());
+                const tile = key(handle.identity);
+                remember(tile, "hidden", context.tile);
+                hiddenAt.set(tile, performance.now());
             }
             return hide.call(this, context);
         };
@@ -411,7 +533,15 @@ window.__TERRAIN_BENCH__ = (() => {
             changes: () => shown + hidden,
             report: () => {
                 const worst = [...returnsByTile.entries()].sort((left, right) => right[1] - left[1])[0];
-                return { shown, hidden, returns, quickReturns, tilesReturning: returnsByTile.size, ...(worst ? { mostReturns: worst[1], mostReturningTile: worst[0] } : {}) };
+                return {
+                    shown,
+                    hidden,
+                    returns,
+                    quickReturns,
+                    quickReturnsInView,
+                    tilesReturning: returnsByTile.size,
+                    ...(worst ? { mostReturns: worst[1], mostReturningTile: worst[0], mostReturningHistory: history.get(worst[0]) } : {}),
+                };
             },
         };
     }
@@ -457,7 +587,11 @@ window.__TERRAIN_BENCH__ = (() => {
         const stats = document.getElementById("runtime-statistics");
         const settling = performance.now();
         const { runtime, motionScale } = example();
-        const settled = () => / 0 pending/.test(stats?.textContent ?? "") && !terrain.grids?.junctionsDirty && !runtime.hasPendingWork && (motionScale?.scale ?? 1) === 1;
+        const settled = () =>
+            / 0 pending/.test(stats?.textContent ?? "") &&
+            !terrain.grids?.junctionsDirty &&
+            !runtime.hasPendingWork &&
+            (motionScale?.scale ?? 1) === 1;
         while (!settled() && performance.now() - settling < 60000) await new Promise((r) => setTimeout(r, 100));
         const settleSeconds = round((performance.now() - settling) / 1000, 1);
         await new Promise((r) => setTimeout(r, 500));
@@ -477,7 +611,22 @@ window.__TERRAIN_BENCH__ = (() => {
         lod.meanErrorAtRest = round(errors.reduce((sum, value) => sum + value, 0) / Math.max(1, errors.length));
         lod.selectedAtRest = errors.length;
         lod.errorsAbove10AtRest = errors.filter((value) => value > 10).length;
-        return { probeDetects, lod, settleSeconds, holesAtRest, worstSharedEdgeAtRestMetres: round(atRest.worstVisible, 3), ...(atRest.worstPair ? { worstPairAtRest: atRest.worstPair } : {}), frames, framesWithHoles, worstHoles, edgeChecks, sharedVerticesPerCheck: Math.round(sharedVertices / Math.max(1, edgeChecks)), worstSharedEdgeMetres: round(worstVisibleEdge, 3), worstOutOfViewEdgeMetres: round(worstEdge, 3), ...(worstPair ? { worstPair } : {}) };
+        return {
+            probeDetects,
+            lod,
+            settleSeconds,
+            holesAtRest,
+            worstSharedEdgeAtRestMetres: round(atRest.worstVisible, 3),
+            ...(atRest.worstPair ? { worstPairAtRest: atRest.worstPair } : {}),
+            frames,
+            framesWithHoles,
+            worstHoles,
+            edgeChecks,
+            sharedVerticesPerCheck: Math.round(sharedVertices / Math.max(1, edgeChecks)),
+            worstSharedEdgeMetres: round(worstVisibleEdge, 3),
+            worstOutOfViewEdgeMetres: round(worstEdge, 3),
+            ...(worstPair ? { worstPair } : {}),
+        };
     }
 
     return { performancePass, integrityPass, engine: () => example()?.terrain?.name };

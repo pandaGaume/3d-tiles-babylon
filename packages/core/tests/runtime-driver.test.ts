@@ -129,3 +129,54 @@ describe("BabylonRuntimeDriver", () => {
         await expect(new BabylonRuntimeDriver(new FakeRuntime(), scene).start()).rejects.toThrow("no active camera");
     });
 });
+
+describe("BabylonRuntimeDriver before rendering", () => {
+    it("publishes the current camera selection manually and does no traversal while still", async () => {
+        const { scene, camera } = createCameraScene();
+        const runtime = new FakeRuntime();
+        const driver = new BabylonRuntimeDriver(runtime, scene, { camera, manual: true });
+        await driver.start();
+        camera.position.x = 25;
+        camera.update();
+        scene.render(false);
+        expect(runtime.frames).toBe(1);
+        await driver.updateBeforeRender();
+        expect(runtime.frames).toBe(2);
+        expect(runtime.cameras.at(-1)?.camera.position.x).toBe(25);
+        scene.render(false);
+        await driver.updateBeforeRender();
+        expect(runtime.frames).toBe(2);
+        driver.dispose();
+        scene.dispose();
+    });
+
+    it("waits for publication and shares an in-progress frame", async () => {
+        const { scene, camera } = createCameraScene();
+        const runtime = new FakeRuntime();
+        const driver = new BabylonRuntimeDriver(runtime, scene, { camera, manual: true });
+        await driver.start();
+        let publish: (() => void) | undefined;
+        const process = vi.fn(() => {
+            runtime.hasPendingWork = false;
+            return new Promise<void>((resolve) => {
+                publish = resolve;
+            });
+        });
+        runtime.processFrame = process;
+        runtime.hasPendingWork = true;
+        let published = false;
+        const first = driver.updateBeforeRender().then(() => {
+            published = true;
+        });
+        const second = driver.updateBeforeRender();
+        await Promise.resolve();
+        expect(process).toHaveBeenCalledTimes(1);
+        expect(published).toBe(false);
+        publish!();
+        await Promise.all([first, second]);
+        expect(published).toBe(true);
+        expect(process).toHaveBeenCalledTimes(1);
+        driver.dispose();
+        scene.dispose();
+    });
+});

@@ -5,6 +5,7 @@
     "selection": {
         "screenSpaceError": 10,
         "hysteresis": 0.2,
+        "frustumMargin": 0.25,
         "coarseningDelayMilliseconds": 300,
         "maxConcurrentLoads": 12,
         "contentCacheEntries": 1024
@@ -19,18 +20,24 @@
         "tileCells": 256,
         "cacheEntries": 2048,
         "abortDelayMilliseconds": 500,
-        "interpolation": "cubic"
+        "interpolation": "cubic",
+        "generatedLevels": 3
     },
     "imagery": {
         "tileCells": 256,
         "minLOD": 3,
         "maxLOD": 20,
         "screenSpaceError": 2,
+        "demSubdivision": 4,
         "contentCacheEntries": 512,
         "maxDrapeDepth": 4
     },
     "objects": {
         "screenSpaceError": 8
+    },
+    "orbitalCamera": {
+        "radiusMin": 10,
+        "altitudeMin": 1.5
     },
     "mercator": {
         "minLOD": 3,
@@ -38,7 +45,6 @@
     },
     "cube": {
         "workingSetFactor": 3,
-        "frustumMargin": 0.25,
         "syntheticDemMaxLOD": 10
     },
     "mesh": {
