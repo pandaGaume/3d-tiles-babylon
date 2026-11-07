@@ -133,7 +133,7 @@ describe("shaders", () => {
     });
 
     it("only declares the fragment normal inputs with radial heights", () => {
-        expect(instancedGridPixelShader.shader).toContain("heightGradient(vPage, vTile)");
+        expect(instancedGridPixelShader.shader).toContain("joinedGradient(vTile)");
         expect(instancedGridPixelShader.shader).toMatch(/#ifdef RADIAL_HEIGHTS[\s\S]*#else\s+vec3 normal = normalize\(vNormal\);/);
     });
 });

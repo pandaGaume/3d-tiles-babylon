@@ -16,6 +16,7 @@ varying vec4 vEdgeS;
 varying vec4 vEdgeW;
 uniform sampler2DArray elevations;
 uniform float verticalScale;
+uniform float cells;
 #else
 varying vec3 vNormal;
 #endif
@@ -34,68 +35,51 @@ uniform float imagerySize;
 #endif
 
 #ifdef RADIAL_HEIGHTS
-// Height at a tile coordinate in the DEM across an edge of the tile, bilinear, the coordinate running past that edge. The
-// fraction of the layer holds the quarter turns of a DEM tile on another cube face. Interpolated varyings hold constants
-// up to rounding: 0.125 keeps the layer and the turns.
-float heightAcross(vec4 reference, vec2 uv, int last) {
-    float w = reference.w + 0.125;
-    int turns = int(fract(w) * 4.0);
-    vec2 turned = uv;
-    if (turns == 1) turned = vec2(1.0 - uv.y, uv.x);
-    else if (turns == 2) turned = vec2(1.0 - uv.x, 1.0 - uv.y);
-    else if (turns == 3) turned = vec2(uv.y, 1.0 - uv.x);
-    vec2 texel = (reference.xy + turned * reference.z) * float(last);
-    ivec2 base = clamp(ivec2(floor(texel)), ivec2(0), ivec2(last - 1));
-    vec2 f = clamp(texel - vec2(base), 0.0, 1.0);
-    int layer = int(floor(w));
-    float h00 = texelFetch(elevations, ivec3(base, layer), 0).r;
-    float h10 = texelFetch(elevations, ivec3(base + ivec2(1, 0), layer), 0).r;
-    float h01 = texelFetch(elevations, ivec3(base + ivec2(0, 1), layer), 0).r;
-    float h11 = texelFetch(elevations, ivec3(base + ivec2(1, 1), layer), 0).r;
-    return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
+// Central differences include the one-sample gutter copied from resident neighbour DEMs.
+vec2 sampleGradient(ivec2 p, int layer) {
+    p += ivec2(1);
+    float west = texelFetch(elevations, ivec3(p - ivec2(1, 0), layer), 0).r;
+    float east = texelFetch(elevations, ivec3(p + ivec2(1, 0), layer), 0).r;
+    float north = texelFetch(elevations, ivec3(p - ivec2(0, 1), layer), 0).r;
+    float south = texelFetch(elevations, ivec3(p + ivec2(0, 1), layer), 0).r;
+    return 0.5 * vec2(east - west, south - north);
 }
-
-// Whether a reference reads another DEM page than this one: a neighbour not in memory falls back to the page of the tile.
-bool otherPage(vec4 reference, int layer) {
-    return reference.w >= 0.0 && int(floor(reference.w + 0.125)) != layer;
-}
-
-// Gradient of the height per texel at a sample of a DEM page, by central differences. On the edge of the page the sample
-// beyond is read in the DEM across, so that both sides of the edge compute the same slope; one-sided when it is not in memory.
-vec2 sampleGradient(ivec2 p, vec4 page, int layer, int last) {
-    float center = texelFetch(elevations, ivec3(p, layer), 0).r;
-    vec2 origin = page.xy;
-    float perTexel = 1.0 / (float(last) * page.z);
-    vec2 uv = (vec2(p) / float(last) - origin) / page.z;
-    float west = center;
-    float east = center;
-    float north = center;
-    float south = center;
-    float dx = 0.0;
-    float dy = 0.0;
-    if (p.x > 0) { west = texelFetch(elevations, ivec3(p.x - 1, p.y, layer), 0).r; dx += 1.0; }
-    else if (otherPage(vEdgeW, layer)) { west = heightAcross(vEdgeW, uv - vec2(perTexel, 0.0), last); dx += 1.0; }
-    if (p.x < last) { east = texelFetch(elevations, ivec3(p.x + 1, p.y, layer), 0).r; dx += 1.0; }
-    else if (otherPage(vEdgeE, layer)) { east = heightAcross(vEdgeE, uv + vec2(perTexel, 0.0), last); dx += 1.0; }
-    if (p.y > 0) { north = texelFetch(elevations, ivec3(p.x, p.y - 1, layer), 0).r; dy += 1.0; }
-    else if (otherPage(vEdgeN, layer)) { north = heightAcross(vEdgeN, uv - vec2(0.0, perTexel), last); dy += 1.0; }
-    if (p.y < last) { south = texelFetch(elevations, ivec3(p.x, p.y + 1, layer), 0).r; dy += 1.0; }
-    else if (otherPage(vEdgeS, layer)) { south = heightAcross(vEdgeS, uv + vec2(0.0, perTexel), last); dy += 1.0; }
-    return vec2((east - west) / dx, (south - north) / dy);
-}
-
 // Gradient of the height per unit of tile coordinate, at a point of a DEM page: the gradients of its four nearest samples
 // interpolated, so that lighting stays smooth across the cells of the DEM.
 vec2 heightGradient(vec4 page, vec2 uv) {
     if (page.w < 0.0) return vec2(0.0);
-    int last = textureSize(elevations, 0).x - 1;
+    int last = textureSize(elevations, 0).x - 3;
+    int turns = int(fract(page.w + 0.125) * 4.0);
+    if (turns == 1) uv = vec2(1.0 - uv.y, uv.x);
+    else if (turns == 2) uv = vec2(1.0 - uv.x, 1.0 - uv.y);
+    else if (turns == 3) uv = vec2(uv.y, 1.0 - uv.x);
     vec2 texel = (page.xy + uv * page.z) * float(last);
     ivec2 base = clamp(ivec2(floor(texel)), ivec2(0), ivec2(last - 1));
     vec2 f = clamp(texel - vec2(base), 0.0, 1.0);
-    int layer = int(floor(page.w + 0.5));
-    vec2 top = mix(sampleGradient(base, page, layer, last), sampleGradient(base + ivec2(1, 0), page, layer, last), f.x);
-    vec2 bottom = mix(sampleGradient(base + ivec2(0, 1), page, layer, last), sampleGradient(base + ivec2(1, 1), page, layer, last), f.x);
-    return mix(top, bottom, f.y) * page.z * float(last) * verticalScale;
+    int layer = int(floor(page.w + 0.125));
+    vec2 top = mix(sampleGradient(base, layer), sampleGradient(base + ivec2(1, 0), layer), f.x);
+    vec2 bottom = mix(sampleGradient(base + ivec2(0, 1), layer), sampleGradient(base + ivec2(1, 1), layer), f.x);
+    vec2 gradient = mix(top, bottom, f.y) * page.z * float(last) * verticalScale;
+    if (turns == 1) gradient = vec2(gradient.y, -gradient.x);
+    else if (turns == 2) gradient = -gradient;
+    else if (turns == 3) gradient = vec2(-gradient.y, gradient.x);
+    return gradient;
+}
+
+// Geometry joins the coarsest DEM on an edge. Its normal must follow that same surface,
+// fading into the interior over one grid cell instead of switching DEM gradients abruptly.
+vec2 joinedGradient(vec2 uv) {
+    vec2 gradient = heightGradient(vPage, uv);
+    float width = 1.0 / cells;
+    if (uv.y < width && vEdgeN.w >= 0.0 && abs(vEdgeN.w - vPage.w) > 0.125)
+        gradient = mix(heightGradient(vEdgeN, uv), gradient, smoothstep(0.0, width, uv.y));
+    if (1.0 - uv.x < width && vEdgeE.w >= 0.0 && abs(vEdgeE.w - vPage.w) > 0.125)
+        gradient = mix(heightGradient(vEdgeE, uv), gradient, smoothstep(0.0, width, 1.0 - uv.x));
+    if (1.0 - uv.y < width && vEdgeS.w >= 0.0 && abs(vEdgeS.w - vPage.w) > 0.125)
+        gradient = mix(heightGradient(vEdgeS, uv), gradient, smoothstep(0.0, width, 1.0 - uv.y));
+    if (uv.x < width && vEdgeW.w >= 0.0 && abs(vEdgeW.w - vPage.w) > 0.125)
+        gradient = mix(heightGradient(vEdgeW, uv), gradient, smoothstep(0.0, width, uv.x));
+    return gradient;
 }
 #endif
 
@@ -114,7 +98,7 @@ void main(void) {
     // cell shows, and both sides of a tile edge read the same slope. Its page must hold the samples of the source: levels
     // interpolated below it have a slope constant by parts, which shows as a checkerboard.
     vec3 up = normalize(vUp);
-    vec2 gradient = heightGradient(vPage, vTile);
+    vec2 gradient = joinedGradient(vTile);
     vec3 normal = normalize(cross(vEast + up * gradient.x, -(vSouth + up * gradient.y)));
 #else
     vec3 normal = normalize(vNormal);

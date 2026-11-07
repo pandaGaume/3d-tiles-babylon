@@ -19,6 +19,7 @@ attribute vec4 instCornerNE;
 attribute vec4 instCornerSE;
 attribute vec4 instCornerSW;
 uniform mat4 viewProjection;
+uniform mat4 bodyRotation;
 uniform float cells;
 uniform float verticalScale;
 uniform sampler2DArray shapes;
@@ -59,7 +60,7 @@ return instElevation;
 }
 float heightIn(vec4 reference, vec2 uv) {
 if (reference.w < 0.0) return 0.0;
-float size = float(textureSize(elevations, 0).x);
+float size = float(textureSize(elevations, 0).x - 2);
 #ifdef RADIAL_HEIGHTS
 int turns = int(fract(reference.w) * 4.0 + 0.5);
 vec2 turned = uv;
@@ -77,6 +78,7 @@ int layer = int(floor(reference.w));
 #else
 int layer = int(reference.w + 0.5);
 #endif
+base += ivec2(1);
 float h00 = texelFetch(elevations, ivec3(base, layer), 0).r;
 float h10 = texelFetch(elevations, ivec3(base + ivec2(1, 0), layer), 0).r;
 float h01 = texelFetch(elevations, ivec3(base + ivec2(0, 1), layer), 0).r;
@@ -147,7 +149,7 @@ vec3 normal = normalize(cross(eastward, northward));
 vNormal = rotate(normal);
 #endif
 vImagery = vec3(instImagery.xy + position.xy * instImagery.z, instImagery.w);
-gl_Position = viewProjection * vec4(rotate(local) + instPlace.xyz, 1.0);
+gl_Position = viewProjection * bodyRotation * vec4(rotate(local) + instPlace.xyz, 1.0);
 }`;
 ShaderStore.ShadersStore[name] = shader;
 /** @internal */

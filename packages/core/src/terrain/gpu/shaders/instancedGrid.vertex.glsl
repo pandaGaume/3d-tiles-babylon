@@ -33,6 +33,7 @@ attribute vec4 instCornerSE;
 attribute vec4 instCornerSW;
 
 uniform mat4 viewProjection;
+uniform mat4 bodyRotation;
 uniform float cells;
 uniform float verticalScale;
 uniform sampler2DArray shapes;
@@ -81,7 +82,7 @@ vec4 elevationAt(ivec2 h) {
 // Height at tile coordinates in a DEM page, interpolated bilinearly between its heights.
 float heightIn(vec4 reference, vec2 uv) {
     if (reference.w < 0.0) return 0.0;
-    float size = float(textureSize(elevations, 0).x);
+    float size = float(textureSize(elevations, 0).x - 2);
 #ifdef RADIAL_HEIGHTS
     int turns = int(fract(reference.w) * 4.0 + 0.5);
     vec2 turned = uv;
@@ -99,6 +100,7 @@ float heightIn(vec4 reference, vec2 uv) {
 #else
     int layer = int(reference.w + 0.5);
 #endif
+    base += ivec2(1); // One-sample gutter surrounds the point DEM.
     float h00 = texelFetch(elevations, ivec3(base, layer), 0).r;
     float h10 = texelFetch(elevations, ivec3(base + ivec2(1, 0), layer), 0).r;
     float h01 = texelFetch(elevations, ivec3(base + ivec2(0, 1), layer), 0).r;
@@ -188,5 +190,5 @@ void main(void) {
     vNormal = rotate(normal);
 #endif
     vImagery = vec3(instImagery.xy + position.xy * instImagery.z, instImagery.w);
-    gl_Position = viewProjection * vec4(rotate(local) + instPlace.xyz, 1.0);
+    gl_Position = viewProjection * bodyRotation * vec4(rotate(local) + instPlace.xyz, 1.0);
 }

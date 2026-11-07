@@ -99,6 +99,10 @@ engine.runRenderLoop(() => {
 });
 ```
 
+## Terrain on a moving body
+
+`new GpuTerrainEngine(inputs, { root })` accepts an optional rigid `TransformNode` mapping body-fixed metres to the render scene. The runtime camera, tile addresses and DEM stay body-fixed. The engine converts the scene's floating-origin eye to that frame, subtracts tile centres in double precision, then applies the root rotation to camera-relative vertices in the existing shader. Lighting is converted to body axes, and CPU picking grids inherit the root and its metadata. With no root, the existing ECEF behaviour is unchanged. Register `terrain.grid.mesh` with the body's directional light when the scene contains lights scoped through `includedOnlyMeshes`. All rendered surfaces must share the terrain shader's projected-depth convention.
+
 ## Monitoring
 
 ```ts

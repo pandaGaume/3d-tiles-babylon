@@ -3,7 +3,8 @@ import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight.js";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
 import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
+import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
+import type { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import type { Observer } from "@babylonjs/core/Misc/observable.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import type {
@@ -30,8 +31,11 @@ import { InstancedGrid, INSTANCE_ATTRIBUTES, refinedGridTopology, type InstanceA
 import { instancedGridPixelShader } from "./shaders/instancedGrid.fragment";
 import { instancedGridVertexShader } from "./shaders/instancedGrid.vertex";
 import { PickSurface } from "./pick-surface";
+import { terrainBodyFrame } from "./body-frame";
 
 export interface IGpuTerrainEngineOptions {
+    /** Optional rigid body-fixed to scene transform. Selection and DEM addresses stay body-fixed. */
+    root?: TransformNode;
     /** Cells per grid side. Defaults to {@link TERRAIN_CONFIG}, like the mesh engine. */
     cells?: number;
     /** Deepest instance below its terrain tile. Defaults to {@link TERRAIN_CONFIG}. */
@@ -93,6 +97,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
     public readonly grid: InstancedGrid;
     public readonly pickSurface: PickSurface;
     private readonly scene: Scene;
+    private readonly root: TransformNode | undefined;
     private readonly tiling: ITerrainTiling;
     private readonly cells: number;
     private readonly elevation: ITerrainEngineInputs["elevation"];
@@ -113,6 +118,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
 
     public constructor(inputs: ITerrainEngineInputs, options: IGpuTerrainEngineOptions = {}) {
         this.scene = inputs.scene;
+        this.root = options.root;
         this.tiling = inputs.tiling ?? webMercatorTiling();
         this.cells = options.cells ?? TERRAIN_CONFIG.grid.cells;
         this.elevation = inputs.elevation;
@@ -137,6 +143,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
             this.scene,
             inputs.elevation?.pyramid,
             options.elevationPageSize ?? TERRAIN_CONFIG.dem.tileCells + 1,
+            this.tiling,
         );
         this.pickSurface = new PickSurface(
             this.scene,
@@ -144,6 +151,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
             this.verticalScale.value,
             options.pickCells ?? TERRAIN_CONFIG.gpu.pickCells,
             this.tiling,
+            this.root,
         );
 
         this.material = new ShaderMaterial(
@@ -154,6 +162,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
                 attributes: ["position", ...INSTANCE_ATTRIBUTES],
                 uniforms: [
                     "viewProjection",
+                    "bodyRotation",
                     "cells",
                     "verticalScale",
                     "baseColor",
@@ -173,6 +182,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
             },
         );
         this.material.backFaceCulling = false;
+        this.material.setMatrix("bodyRotation", Matrix.Identity());
         this.material.wireframe = inputs.wireframe;
         this.material.setFloat("cells", this.cells);
         this.material.setFloat("verticalScale", this.verticalScale.value);
@@ -447,7 +457,8 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
 
     /** Writes the tile centres relative to the camera, in double precision, and the light uniforms. */
     private place(): void {
-        const eye = this.scene.floatingOriginOffset;
+        const { eye, rotation } = terrainBodyFrame(this.scene.floatingOriginOffset, this.root);
+        this.material.setMatrix("bodyRotation", rotation);
         const place = this.grid.attribute("instPlace");
         this.placed.forEach(({ center }, index) => {
             place[index * 4] = center.x - eye.x;
@@ -460,11 +471,23 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
 
     /** Passes the first directional and hemispheric lights of the scene, as the standard material sees them. */
     private updateLights(): void {
-        const sun = this.scene.lights.find((light): light is DirectionalLight => light instanceof DirectionalLight && light.isEnabled());
+        const sun = this.scene.lights.find(
+            (light): light is DirectionalLight =>
+                light instanceof DirectionalLight &&
+                light.isEnabled() &&
+                (!this.root || light.includedOnlyMeshes.length === 0 || (this.grid && light.includedOnlyMeshes.includes(this.grid.mesh))),
+        );
         const sky = this.scene.lights.find((light): light is HemisphericLight => light instanceof HemisphericLight && light.isEnabled());
-        this.material.setVector3("sunDirection", sun ? sun.direction.negate().normalize() : Vector3.Up());
+        const inverse = this.root ? Matrix.Invert(this.root.computeWorldMatrix(true)) : Matrix.IdentityReadOnly;
+        this.material.setVector3(
+            "sunDirection",
+            Vector3.TransformNormal(sun ? sun.direction.negate().normalize() : Vector3.Up(), inverse).normalize(),
+        );
         this.material.setColor3("sunColor", sun ? sun.diffuse.scale(sun.intensity) : Color3.White());
-        this.material.setVector3("skyDirection", sky ? sky.direction.normalizeToNew() : Vector3.Up());
+        this.material.setVector3(
+            "skyDirection",
+            Vector3.TransformNormal(sky ? sky.direction.normalizeToNew() : Vector3.Up(), inverse).normalize(),
+        );
         this.material.setColor3("skyColor", sky ? sky.diffuse.scale(sky.intensity) : Color3.Black());
         this.material.setColor3("groundColor", sky ? sky.groundColor.scale(sky.intensity) : Color3.Black());
     }
