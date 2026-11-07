@@ -1,5 +1,6 @@
 import { GeodeticSystem } from "@spacexr/geodesy";
 import type { IGridTopology } from "@spacexr/grid";
+import type { ITileAddress, ITileSurface } from "@spacexr/tiles";
 
 /** Unique Cartesian geometry produced for one geographic tile. */
 export interface IEllipsoidTileGeometry {
@@ -106,36 +107,29 @@ export interface IElevatedGridGeometry {
     readonly indices: Uint32Array;
 }
 
-/**
- * Projects a topology onto a Web Mercator region and records unscaled heights.
- * Rows follow the Web Mercator ordinate so that vertices line up with DEM pixels.
- */
+/** The lattice value of a stored coordinate, in double precision, so that both sides of an edge compute one point. */
+function latticeCoordinate(coordinate: number, segments: number): number {
+    return Math.round(coordinate * 2 * segments) / (2 * segments);
+}
+
+/** Places a topology on a tile of any surface and records its unscaled heights. */
 export function projectElevatedGrid(
     topology: IGridTopology,
-    region: readonly number[],
+    address: ITileAddress,
+    surface: ITileSurface,
     heightAt: (u: number, v: number) => number,
-    system: GeodeticSystem = GeodeticSystem.WGS84,
 ): IElevatedGridGeometry {
-    const [west, south, east, north] = region;
-    if (west === undefined || south === undefined || east === undefined || north === undefined)
-        throw new RangeError("The 3D Tiles region is incomplete.");
-
     const vertexCount = topology.coordinates.length / 2;
     const base = new Float64Array(vertexCount * 3);
     const up = new Float64Array(vertexCount * 3);
     const heights = new Float32Array(vertexCount);
-    const northOrdinate = mercatorOrdinate(north);
-    const southOrdinate = mercatorOrdinate(south);
     const point = { x: 0, y: 0, z: 0 };
     const normal = { x: 0, y: 0, z: 0 };
-
     for (let vertex = 0; vertex < vertexCount; vertex++) {
-        const u = topology.coordinates[vertex * 2]!;
-        const v = topology.coordinates[vertex * 2 + 1]!;
-        const longitude = west + (east - west) * u;
-        const latitude = 2 * Math.atan(Math.exp(northOrdinate + (southOrdinate - northOrdinate) * v)) - Math.PI / 2;
-        system.geodeticRadiansToEcef(latitude, longitude, 0, point);
-        system.geodeticSurfaceNormalRadians(latitude, longitude, normal);
+        const u = latticeCoordinate(topology.coordinates[vertex * 2]!, topology.columns);
+        const v = latticeCoordinate(topology.coordinates[vertex * 2 + 1]!, topology.rows);
+        surface.point(address, u, v, 0, point);
+        surface.up(address, u, v, normal);
         base.set([point.x, point.y, point.z], vertex * 3);
         up.set([normal.x, normal.y, normal.z], vertex * 3);
         heights[vertex] = heightAt(u, v);

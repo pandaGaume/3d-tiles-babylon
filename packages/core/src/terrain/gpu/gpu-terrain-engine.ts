@@ -19,6 +19,7 @@ import { parentTileAddress, tileAddressKey as key } from "@spacexr/tiles";
 
 import type { IBabylonTileResourceStatistics } from "../../monitor/runtime-monitor";
 import type { BabylonRasterPages } from "../../raster/raster-pages";
+import { TERRAIN_CONFIG } from "../terrain-config";
 import type { ITerrainEngine, ITerrainEngineInputs } from "../terrain-engine";
 import { sharedVerticalScale } from "../mesh/geodesic-grid-pipeline";
 import { regionWithHeights, tileIdentity, tileRegion } from "../terrain-tile";
@@ -31,15 +32,15 @@ import { instancedGridVertexShader } from "./shaders/instancedGrid.vertex";
 import { PickSurface } from "./pick-surface";
 
 export interface IGpuTerrainEngineOptions {
-    /** Cells per grid side. Defaults to 16, like the mesh engine. */
+    /** Cells per grid side. Defaults to {@link TERRAIN_CONFIG}, like the mesh engine. */
     cells?: number;
-    /** Deepest instance below its terrain tile. Defaults to 6. */
+    /** Deepest instance below its terrain tile. Defaults to {@link TERRAIN_CONFIG}. */
     maxInstanceDepth?: number;
-    /** Time a coarsened imagery level stays in the instance cut, in milliseconds. Defaults to 500. */
+    /** Time a coarsened imagery level stays in the instance cut, in milliseconds. Defaults to {@link TERRAIN_CONFIG}. */
     holdMilliseconds?: number;
-    /** Heights per elevation page side: the DEM tile size plus one. Defaults to 257. */
+    /** Heights per elevation page side: the DEM tile size plus one. Defaults to {@link TERRAIN_CONFIG}. */
     elevationPageSize?: number;
-    /** Cells per side of the grids the camera picks, one per terrain tile. Defaults to 8. */
+    /** Cells per side of the grids the camera picks, one per terrain tile. Defaults to {@link TERRAIN_CONFIG}. */
     pickCells?: number;
 }
 
@@ -113,7 +114,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
     public constructor(inputs: ITerrainEngineInputs, options: IGpuTerrainEngineOptions = {}) {
         this.scene = inputs.scene;
         this.tiling = inputs.tiling ?? webMercatorTiling();
-        this.cells = options.cells ?? 16;
+        this.cells = options.cells ?? TERRAIN_CONFIG.grid.cells;
         this.elevation = inputs.elevation;
         this.imageryPages = inputs.wireframe ? undefined : inputs.imageryPages;
         this.verticalScale = sharedVerticalScale(inputs.elevation?.verticalScale);
@@ -127,17 +128,21 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
             ...(this.tiling.coverRoots && inputs.elevation
                 ? { terrainDataLevel: (terrain: ITileAddress) => inputs.elevation!.pyramid.rasters.areaOf(terrain).ancestor.lod }
                 : {}),
-            ...(options.maxInstanceDepth === undefined ? {} : { maxDepth: options.maxInstanceDepth }),
-            ...(options.holdMilliseconds === undefined ? {} : { holdMilliseconds: options.holdMilliseconds }),
+            maxDepth: options.maxInstanceDepth ?? TERRAIN_CONFIG.gpu.maxInstanceDepth,
+            holdMilliseconds: options.holdMilliseconds ?? TERRAIN_CONFIG.gpu.holdMilliseconds,
         });
         // Shapes hold the half-cell lattice: the grid vertices and the edge midpoints.
         this.shapes = new GridShapes(this.scene, 2 * this.cells, this.tiling);
-        this.elevations = new ElevationPages(this.scene, inputs.elevation?.pyramid, options.elevationPageSize ?? 257);
+        this.elevations = new ElevationPages(
+            this.scene,
+            inputs.elevation?.pyramid,
+            options.elevationPageSize ?? TERRAIN_CONFIG.dem.tileCells + 1,
+        );
         this.pickSurface = new PickSurface(
             this.scene,
             inputs.elevation?.pyramid,
             this.verticalScale.value,
-            options.pickCells ?? 8,
+            options.pickCells ?? TERRAIN_CONFIG.gpu.pickCells,
             this.tiling,
         );
 
@@ -197,7 +202,7 @@ export class GpuTerrainEngine implements ITerrainEngine<IGpuTerrainHandle> {
             }
             try {
                 const identity = tileIdentity(context);
-                const heights = await this.elevation?.pyramid.tileHeights(identity);
+                const heights = await this.elevation?.pyramid.tileHeights(identity, context.signal);
                 if (context.signal.aborted) {
                     await context.readiness.cancelled(content.id);
                     continue;

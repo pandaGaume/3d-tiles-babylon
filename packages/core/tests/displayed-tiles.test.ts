@@ -1,5 +1,13 @@
 import { NeighborLod } from "@spacexr/grid";
-import { TileNeighbor } from "@spacexr/tiles";
+import {
+    CUBE_TILE_TOPOLOGY,
+    TILE_EDGE_NEIGHBORS,
+    TileNeighbor,
+    childTileAddresses,
+    parentTileAddress,
+    tileAddressKey,
+    type ITileAddress,
+} from "@spacexr/tiles";
 import { describe, expect, it } from "vitest";
 
 import { DisplayedTiles } from "../src/terrain/displayed-tiles";
@@ -64,68 +72,113 @@ describe("DisplayedTiles", () => {
         expect(tiles.has({ lod: 5, x: 1, y: 1 })).toBe(true);
     });
 
-    it("lists the displayed tiles touching a point, from the coarsest level", () => {
-        // 4/4/4 covers [0.25, 0.3125]; its east neighbour is split into 5/10/8 and 5/10/9.
+    it("lists the levels touching a point of a tile, from the coarsest", () => {
+        // 4/4/4; its east neighbour is split into 5/10/8 and 5/10/9.
         const tiles = displayed("4/4/4", "5/10/8", "5/10/9");
+        const tile = { lod: 4, x: 4, y: 4 };
 
-        // On the shared edge, at the corner of the two finer tiles.
-        expect(tiles.touching(0.3125, 0.28125)).toEqual([
-            { lod: 4, x: 4, y: 4 },
-            { lod: 5, x: 10, y: 8 },
-        ]);
-        // Inside the coarse tile only.
-        expect(tiles.touching(0.27, 0.27)).toEqual([{ lod: 4, x: 4, y: 4 }]);
-
-        tiles.delete({ lod: 4, x: 4, y: 4 });
-        expect(tiles.touching(0.3125, 0.28125)).toEqual([{ lod: 5, x: 10, y: 8 }]);
+        expect(tiles.levelsAt(tile, 1, 0.5)).toEqual([4, 5]);
+        expect(tiles.levelsAt(tile, 0.5, 0.5)).toEqual([4]);
+        // Nothing across its west edge.
+        expect(tiles.levelsAt(tile, 0, 0.5)).toEqual([4]);
+        expect(tiles.levelsAt({ lod: 5, x: 10, y: 8 }, 0, 0.5)).toEqual([4, 5]);
     });
 
-    it("finds tiles touching a point across the antimeridian", () => {
+    it("reads the level across a corner, and finer tiles only when they touch it", () => {
+        const tiles = displayed("4/4/4", "5/10/10", "5/11/11");
+        const tile = { lod: 4, x: 4, y: 4 };
+
+        // 5/10/10 is the child of 4/5/5 touching the south-east corner of the tile, 5/11/11 is not.
+        expect(tiles.lodAcross(tile, TileNeighbor.SE)).toBe(5);
+        expect(tiles.levelsAt(tile, 1, 1)).toEqual([4, 5]);
+
+        const apart = displayed("4/4/4", "5/11/11");
+        expect(apart.lodAcross(tile, TileNeighbor.SE)).toBeUndefined();
+    });
+
+    it("finds levels across the antimeridian", () => {
         const tiles = displayed("2/3/1");
 
-        expect(tiles.touching(0, 0.3)).toEqual([{ lod: 2, x: 3, y: 1 }]);
+        expect(tiles.levelsAt({ lod: 2, x: 0, y: 1 }, 0, 0.5)).toEqual([2]);
+        expect(tiles.lodAcross({ lod: 2, x: 0, y: 1 }, TileNeighbor.W)).toBe(2);
     });
 
-    it("lists the tiles touching the boundary of a tile, and not the tiles inside it or apart", () => {
-        const tiles = displayed(
-            "5/10/10", // the tile itself
-            "3/2/2", // an ancestor
-            "5/11/11", // across the south-east corner
-            "6/19/21", // finer, across the west edge
-            "7/41/43", // a descendant along its south edge
-            "7/41/42", // a descendant strictly inside it
-            "5/12/10", // one column apart
-        );
-        const keys = (addresses: { lod: number; x: number; y: number }[]) => addresses.map(({ lod, x, y }) => `${lod}/${x}/${y}`).sort();
-
-        expect(keys(tiles.touchingBoundary({ lod: 5, x: 10, y: 10 }))).toEqual(
-            ["3/2/2", "5/10/10", "5/11/11", "6/19/21", "7/41/43"].sort(),
-        );
-    });
-
-    it("finds every tile that touching returns along the boundary", () => {
-        const tiles = displayed("4/4/4", "5/10/8", "5/10/9", "6/16/20", "5/8/10");
+    it("changes its boundary signature only with the levels around a tile", () => {
         const tile = { lod: 4, x: 4, y: 4 };
-        const found = new Set(tiles.touchingBoundary(tile).map(({ lod, x, y }) => `${lod}/${x}/${y}`));
-        const steps = 64;
-        for (let step = 0; step <= steps; step++) {
-            const t = step / steps;
-            for (const [u, v] of [
-                [t, 0],
-                [1, t],
-                [t, 1],
-                [0, t],
-            ] as const)
-                for (const other of tiles.touching((tile.x + u) / 16, (tile.y + v) / 16))
-                    expect(found).toContain(`${other.lod}/${other.x}/${other.y}`);
+        const tiles = displayed("4/4/4", "4/5/4");
+        const before = tiles.boundarySignature(tile);
+
+        // Apart from the tile.
+        tiles.add({ lod: 4, x: 9, y: 9 });
+        expect(tiles.boundarySignature(tile)).toBe(before);
+
+        tiles.delete({ lod: 4, x: 5, y: 4 });
+        tiles.add({ lod: 5, x: 10, y: 8 });
+        expect(tiles.boundarySignature(tile)).not.toBe(before);
+    });
+});
+
+describe("DisplayedTiles on the cube index", () => {
+    const cube = (...tiles: ITileAddress[]): DisplayedTiles => {
+        const displayedTiles = new DisplayedTiles({ topology: CUBE_TILE_TOPOLOGY });
+        for (const tile of tiles) displayedTiles.add(tile);
+        return displayedTiles;
+    };
+
+    it("does not mix the same address on two faces", () => {
+        const tiles = cube({ face: 0, lod: 2, x: 1, y: 1 });
+
+        expect(tiles.has({ face: 0, lod: 2, x: 1, y: 1 })).toBe(true);
+        expect(tiles.has({ face: 3, lod: 2, x: 1, y: 1 })).toBe(false);
+    });
+
+    it("reads the level across every edge of a face, across turned edges too", () => {
+        for (let face = 0; face < 6; face++) {
+            for (const edge of TILE_EDGE_NEIGHBORS) {
+                const tile = { face, lod: 1, x: edge === TileNeighbor.E ? 1 : 0, y: edge === TileNeighbor.S ? 1 : 0 };
+                const neighbor = CUBE_TILE_TOPOLOGY.neighbor(tile, edge)!;
+                expect(neighbor.address.face).not.toBe(face);
+
+                expect(cube(tile, neighbor.address).lodAcross(tile, edge)).toBe(1);
+                expect(cube(tile, parentTileAddress(neighbor.address)!).lodAcross(tile, edge)).toBe(0);
+                // The two children of the neighbour facing the tile, and not the two others.
+                const children = childTileAddresses(neighbor.address);
+                // They are the neighbours of the children of the tile, across the same edge.
+                const facing = new Set(
+                    childTileAddresses(tile)
+                        .map((child) => CUBE_TILE_TOPOLOGY.neighbor(child, edge)!.address)
+                        .filter((across) => across.face !== face)
+                        .map(tileAddressKey),
+                );
+                expect(facing.size).toBe(2);
+                for (const child of children) {
+                    expect(cube(tile, child).lodAcross(tile, edge)).toBe(facing.has(tileAddressKey(child)) ? 2 : undefined);
+                }
+            }
         }
     });
 
-    it("finds tiles touching a boundary across the antimeridian", () => {
-        // 2/3/1 touches the west edge of 2/0/1 across the antimeridian; 2/2/1 is one column apart.
-        const tiles = displayed("2/3/1", "2/2/1");
+    it("keeps a ghost when a tile with the same address appears on another face", () => {
+        const tiles = cube({ face: 0, lod: 2, x: 1, y: 1 });
+        tiles.hide({ face: 0, lod: 2, x: 1, y: 1 });
+        expect(tiles.isGhost({ face: 0, lod: 2, x: 1, y: 1 })).toBe(true);
 
-        expect(tiles.touchingBoundary({ lod: 2, x: 0, y: 1 })).toEqual([{ lod: 2, x: 3, y: 1 }]);
+        tiles.add({ face: 3, lod: 2, x: 1, y: 1 });
+        tiles.add({ face: 3, lod: 3, x: 2, y: 2 });
+        expect(tiles.isGhost({ face: 0, lod: 2, x: 1, y: 1 })).toBe(true);
+        expect(tiles.has({ face: 0, lod: 2, x: 1, y: 1 })).toBe(true);
+    });
+
+    it("has no corner tile at a vertex of the cube, where 3 tiles meet", () => {
+        const tile = { face: 0, lod: 0, x: 0, y: 0 };
+        const tiles = cube(
+            tile,
+            CUBE_TILE_TOPOLOGY.neighbor(tile, TileNeighbor.N)!.address,
+            CUBE_TILE_TOPOLOGY.neighbor(tile, TileNeighbor.W)!.address,
+        );
+
+        expect(tiles.lodAcross(tile, TileNeighbor.NW)).toBeUndefined();
+        expect(tiles.levelsAt(tile, 0, 0)).toEqual([0]);
     });
 });
 
@@ -162,7 +215,7 @@ describe("DisplayedTiles ghosts", () => {
         tiles.hide(tile(2, 0, 0));
         tiles.delete(tile(2, 0, 0));
         expect(tiles.has(tile(2, 0, 0))).toBe(false);
-        expect(tiles.touching(0.1, 0.1)).toEqual([]);
+        expect(tiles.lodAcross(tile(2, 1, 0), TileNeighbor.W)).toBeUndefined();
     });
 
     it("presents a ghost again as a displayed tile", () => {

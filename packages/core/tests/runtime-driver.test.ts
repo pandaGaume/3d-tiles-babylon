@@ -3,7 +3,7 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import { CameraChangeFlags, type IEcefCameraFrame } from "@spacexr/3d-tiles-runtime";
 import { describe, expect, it, vi } from "vitest";
 
-import { BabylonCameraChangeTracker, BabylonRuntimeDriver, type IFrameDrivenRuntime } from "../src";
+import { BabylonCameraChangeTracker, BabylonRuntimeDriver, MotionRefinementScale, type IFrameDrivenRuntime } from "../src";
 import { createNullScene } from "./helpers";
 
 class FakeRuntime implements IFrameDrivenRuntime {
@@ -30,6 +30,36 @@ function createCameraScene() {
     camera.setTarget(Vector3.Zero());
     return { scene, camera };
 }
+
+describe("BabylonRuntimeDriver with motion", () => {
+    it("asks for a frame once the factor drops, although the camera is still", async () => {
+        const { scene, camera } = createCameraScene();
+        const runtime = new FakeRuntime();
+        const requestFrame = vi.fn();
+        const scale = new MotionRefinementScale({ maxScale: 4, restPixelsPerSecond: 1, fullPixelsPerSecond: 2, releaseMilliseconds: 0 });
+        const driver = new BabylonRuntimeDriver(Object.assign(runtime, { requestFrame }), scene, {
+            camera,
+            motion: { scale, surfaceDistance: () => 1 },
+        });
+        await driver.start();
+        const now = vi.spyOn(performance, "now");
+
+        now.mockReturnValue(1000);
+        driver.update();
+        now.mockReturnValue(1016);
+        camera.position.x += 5;
+        camera.computeWorldMatrix();
+        driver.update();
+        expect(scale.scale).toBe(4);
+        expect(requestFrame).not.toHaveBeenCalled();
+
+        now.mockReturnValue(1032);
+        driver.update();
+        expect(scale.scale).toBe(1);
+        expect(requestFrame).toHaveBeenCalledTimes(1);
+        now.mockRestore();
+    });
+});
 
 describe("BabylonCameraChangeTracker", () => {
     it("reports pose changes once and stays silent while the camera is still", () => {
