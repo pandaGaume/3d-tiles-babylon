@@ -103,7 +103,7 @@ The Google example needs a Map Tiles API key; see its [README](examples/babylon-
 
 ### Shaders
 
-Shaders live in their own `.glsl` files, in a `shaders` folder beside the code that uses them. Edit those files, never the `.ts` module generated beside each one, then generate the modules:
+Shaders live in their own `.glsl` files, in a `shaders` folder beside the code that uses them, and their WGSL twins for WebGPU in `.wgsl` files of a `shaders/wgsl` folder. Edit those files, never the `.ts` module generated beside each one, then generate the modules:
 
 ```bash
 npm run shaders
