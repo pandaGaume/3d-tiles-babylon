@@ -32,33 +32,7 @@ When many tiles arrive at once, the grids whose neighbours changed are rebuilt w
 
 Tiles start with a 0/0 m height range. When a DEM is loaded, the tile reports its measured range to the runtime through `tileBoundingVolume`, and the four quadrant ranges are recorded for its children. The resolver applies them when the children are created, and the runtime applies them again to children created before the parent DEM arrived.
 
-The settings of the terrain are in `packages/core/src/terrain/terrain-config.json`. The URL parameters below override them for a measurement. The camera starts above the Mont Blanc summit. URL parameters:
-
-| Parameter                  | Effect                                                                                                                                                |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `elevation=0`              | Flat grids, no DEM requests                                                                                                                           |
-| `scale=2`                  | Initial altitude scale; the panel slider changes it live                                                                                              |
-| `solid=1`                  | Shaded rendering with a sun light instead of the wireframe                                                                                            |
-| `radius=250`               | Initial camera distance to the summit in metres                                                                                                       |
-| `pitch=50`                 | Initial camera pitch in degrees                                                                                                                       |
-| `junctions=coarse`         | Junction policy between levels of detail: `fine` (default), `coarse` or `none`                                                                        |
-| `heights=finest`           | Height of edge vertices shared by several levels: DEM of the `coarsest` (default), `finest` or `average` level                                        |
-| `balance=0`                | Disables the 2:1 quadtree balance, which keeps neighbouring tiles within one level of detail                                                          |
-| `interpolation=bilinear`   | DEM levels generated below level 15: `cubic` (default), `bilinear`, `linear` or `nearest`                                                             |
-| `engine=gpu`               | Terrain engine: `mesh`, one CPU mesh per tile, or `gpu`, predefined grids instanced on the GPU. Defaults to `mesh`                                    |
-| `demCache=2048`            | DEM tiles kept in memory, 2048 by default                                                                                                             |
-| `demAbortDelay=500`        | Milliseconds a DEM load nobody waits for goes on before it is aborted                                                                                 |
-| `junctionBudget=4`         | Main-thread milliseconds per frame for rebuilding the grids whose neighbours changed, 4 by default                                                    |
-| `sse=10`                   | Screen-space error above which terrain tiles refine, in pixels                                                                                        |
-| `motion=0`                 | Leaves the threshold of new refinements fixed, instead of following the apparent speed of the camera                                                  |
-| `hysteresis=0.2`           | Refined tiles coarsen only once their error drops below `1 - hysteresis` times the threshold                                                          |
-| `coarsenDelay=300`         | Milliseconds a refined tile waits before coarsening                                                                                                   |
-| `imagery=none`             | Imagery draped on shaded grids: `debug` (default), `none`, or the name of a local module (see [Imagery](#imagery))                                    |
-| `kmax=4`                   | Deepest drape, in levels below the terrain tile                                                                                                       |
-| `subtrees=13/4252/2920/13` | Terrain subtrees with their own levels, `lod/x/y/maxLOD` separated by commas: from each root tile down, the grid stops at `maxLOD`, or refines deeper |
-| `renderer=webgpu`          | Runs the WGSL shaders on the WebGPU engine of Babylon.js where the browser supports it, WebGL and the GLSL shaders otherwise                          |
-| `antialias=0`              | Draws without multisampling, whose edges depend on the hardware and the graphics API: the renderer comparison uses it                                 |
-| `monitor=0`                | Disables the monitoring overlay and its counters                                                                                                      |
+The settings of the terrain are in `packages/core/src/terrain/terrain-config.json`, and URL parameters override them for one page. The camera starts above the Mont Blanc summit, or at the place `place`, `lat` and `lon` give. [Terrain settings](../../docs/terrain-settings.md) lists every setting and every URL parameter, with its default and its effect.
 
 The Mapzen attribution is displayed in the bottom-right corner.
 

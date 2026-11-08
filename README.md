@@ -15,7 +15,10 @@ The runtime owns traversal, level of detail, loading and caching. This repositor
 packages/core/                         @spacexr/3d-tiles-babylon
 examples/babylon-google-3d-tiles/      Google Photorealistic 3D Tiles
 examples/babylon-implicit-grid-mapzen/ Implicit WebMercator quadtree with Mapzen elevation
+docs/                                  Terrain settings and how to set them
 ```
+
+Every terrain setting, its default and the URL parameter that overrides it are listed in [Terrain settings](docs/terrain-settings.md).
 
 ## Usage
 
