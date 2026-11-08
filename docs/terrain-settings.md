@@ -80,24 +80,29 @@ The engines take the same values as options in code: `cells`, `maxDrapeDepth` an
 
 These URL parameters choose what the page shows. They have no entry in `terrain-config.json`.
 
-| URL                     | Default    | Effect                                                                                                             |
-| ----------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
-| `engine`                | `mesh`     | Terrain engine: `mesh`, one CPU mesh per tile, or `gpu`, one grid instanced on the GPU                             |
-| `renderer`              | `webgl`    | `webgpu` runs the WebGPU engine of Babylon.js where the browser supports it                                        |
-| `radius`                | 25000      | Initial distance from the camera to the Mont Blanc summit, in metres                                               |
-| `pitch`                 | 60         | Initial pitch of the camera, in degrees                                                                            |
-| `scale`, `exaggeration` | 1          | Initial vertical scale. The slider of the panel changes it live                                                    |
-| `solid`                 | off        | `1` draws shaded terrain with a sun light instead of the wireframe                                                 |
-| `lighting`              | `terrain`  | `ambient` lights the terrain uniformly, for a comparison                                                           |
-| `normals`               | `mapzen`   | Normals of the GPU engine: `mapzen`, the Mapzen normal tiles, or `dem`, the gradients of the DEM                   |
-| `normalMaxLOD`          | 15         | Deepest level of the Mapzen normal tiles, from 0 to 15                                                             |
-| `imagery`               | `debug`    | Imagery of shaded grids: `debug`, `none`, or the name of a local module in `src/local/`, which git ignores         |
-| `elevation`             | on         | `0` keeps the grids flat and requests no DEM                                                                       |
-| `junctions`             | `fine`     | Junction policy between levels of detail: `fine`, `coarse` or `none`                                               |
-| `heights`               | `coarsest` | Height of edge vertices shared by several levels: DEM of the `coarsest`, `finest` or `average` level               |
-| `balance`               | on         | `0` turns off the 2:1 quadtree balance, which keeps neighbouring tiles within one level                            |
-| `subtrees`              | none       | Terrain subtrees with their own deepest level, `lod/x/y/maxLOD` separated by commas, for example `13/4252/2920/13` |
-| `monitor`               | on         | `0` turns off the monitoring overlay and its counters                                                              |
+| URL                     | Default                                | Effect                                                                                                             |
+| ----------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `engine`                | `mesh`                                 | Terrain engine: `mesh`, one CPU mesh per tile, or `gpu`, one grid instanced on the GPU                             |
+| `renderer`              | `webgl`                                | `webgpu` runs the WebGPU engine of Babylon.js where the browser supports it                                        |
+| `place`                 | `mont-blanc`                           | Place the camera orbits, an entry of `src/places.json`: `mont-blanc` or `yosemite` (Half Dome)                     |
+| `lat`, `lon`            | none                                   | Any other point the camera orbits, in degrees, in place of `place`. Both are required                              |
+| `height`                | the place's, or 0 with `lat` and `lon` | Height of the point the camera orbits, in metres                                                                   |
+| `radius`                | 25000                                  | Initial distance from the camera to the point it orbits, in metres                                                 |
+| `pitch`                 | 60                                     | Initial pitch of the camera, in degrees                                                                            |
+| `scale`, `exaggeration` | 1                                      | Initial vertical scale. The slider of the panel changes it live                                                    |
+| `solid`                 | off                                    | `1` draws shaded terrain with a sun light instead of the wireframe                                                 |
+| `lighting`              | `terrain`                              | `ambient` lights the terrain uniformly, for a comparison                                                           |
+| `normals`               | `mapzen`                               | Normals of the GPU engine: `mapzen`, the Mapzen normal tiles, or `dem`, the gradients of the DEM                   |
+| `normalMaxLOD`          | 15                                     | Deepest level of the Mapzen normal tiles, from 0 to 15                                                             |
+| `imagery`               | `debug`                                | Imagery of shaded grids: `debug`, `none`, or the name of a local module in `src/local/`, which git ignores         |
+| `elevation`             | on                                     | `0` keeps the grids flat and requests no DEM                                                                       |
+| `junctions`             | `fine`                                 | Junction policy between levels of detail: `fine`, `coarse` or `none`                                               |
+| `heights`               | `coarsest`                             | Height of edge vertices shared by several levels: DEM of the `coarsest`, `finest` or `average` level               |
+| `balance`               | on                                     | `0` turns off the 2:1 quadtree balance, which keeps neighbouring tiles within one level                            |
+| `subtrees`              | none                                   | Terrain subtrees with their own deepest level, `lod/x/y/maxLOD` separated by commas, for example `13/4252/2920/13` |
+| `monitor`               | on                                     | `0` turns off the monitoring overlay and its counters                                                              |
+
+A new named place is one more entry of `src/places.json`, with its `latitude`, `longitude` and `height`.
 
 ## Values still set in code
 

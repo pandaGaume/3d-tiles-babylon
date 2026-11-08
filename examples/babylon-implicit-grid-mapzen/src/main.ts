@@ -52,6 +52,52 @@ import DemDecoderWorker from "./dem-decoder.worker?worker";
 import { debugImageryTile } from "./debug-imagery";
 import { loadLocalImagery } from "./local-imagery";
 import { clearMonitorPanel, renderMonitorPanel } from "./monitor-panel";
+import places from "./places.json";
+
+interface IPlace {
+    latitude: number;
+    longitude: number;
+    /** Height of the point the camera orbits, in metres. */
+    height: number;
+}
+
+/**
+ * The point the camera orbits. `place` names an entry of places.json, `mont-blanc` by default. `lat` and `lon`, in
+ * degrees, give any other point instead, at `height` metres, 0 by default.
+ */
+function cameraTarget(parameters: URLSearchParams): IPlace {
+    const latitude = parameters.get("lat");
+    const longitude = parameters.get("lon");
+    if (latitude !== null || longitude !== null) {
+        const point = {
+            latitude: Number(latitude),
+            longitude: Number(longitude),
+            height: Number(parameters.get("height") ?? "0"),
+        };
+        if (
+            latitude === null ||
+            longitude === null ||
+            !Object.values(point).every(Number.isFinite) ||
+            Math.abs(point.latitude) > 90 ||
+            Math.abs(point.longitude) > 180
+        )
+            throw new RangeError(
+                "lat and lon must both be given, in degrees, and height in metres.",
+            );
+        return point;
+    }
+    const name = parameters.get("place") ?? "mont-blanc";
+    const place = (places as Record<string, IPlace | undefined>)[name];
+    if (!place)
+        throw new RangeError(
+            `place must be one of ${Object.keys(places).join(", ")}.`,
+        );
+    return {
+        latitude: place.latitude,
+        longitude: place.longitude,
+        height: Number(parameters.get("height") ?? place.height),
+    };
+}
 
 function requiredElement<TElement extends HTMLElement>(
     id: string,
@@ -213,13 +259,8 @@ async function run(): Promise<void> {
         requiredElement("attribution", HTMLElement).textContent =
             dem.source.attribution ?? "";
 
-    // Mont Blanc summit, 4808 m.
-    const montBlanc = {
-        latitude: 45.832622,
-        longitude: 6.865175,
-        height: 4808,
-    };
-    const target = montBlanc;
+    // The camera orbits a place of places.json, or the point `lat` and `lon` give, at `height` metres.
+    const target = cameraTarget(parameters);
     const pitchRadians =
         (Number(parameters.get("pitch") ?? "60") * Math.PI) / 180;
     const orbitRadius = Number(parameters.get("radius") ?? "25000");

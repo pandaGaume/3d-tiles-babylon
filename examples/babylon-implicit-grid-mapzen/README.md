@@ -32,7 +32,7 @@ When many tiles arrive at once, the grids whose neighbours changed are rebuilt w
 
 Tiles start with a 0/0 m height range. When a DEM is loaded, the tile reports its measured range to the runtime through `tileBoundingVolume`, and the four quadrant ranges are recorded for its children. The resolver applies them when the children are created, and the runtime applies them again to children created before the parent DEM arrived.
 
-The settings of the terrain are in `packages/core/src/terrain/terrain-config.json`, and URL parameters override them for one page. The camera starts above the Mont Blanc summit. [Terrain settings](../../docs/terrain-settings.md) lists every setting and every URL parameter, with its default and its effect.
+The settings of the terrain are in `packages/core/src/terrain/terrain-config.json`, and URL parameters override them for one page. The camera starts above the Mont Blanc summit, or at the place `place`, `lat` and `lon` give. [Terrain settings](../../docs/terrain-settings.md) lists every setting and every URL parameter, with its default and its effect.
 
 The Mapzen attribution is displayed in the bottom-right corner.
 
