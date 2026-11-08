@@ -47,7 +47,7 @@ async function run(): Promise<void> {
     const statistics = requiredElement("runtime-statistics", HTMLSpanElement);
     const dataAttribution = requiredElement("data-attribution", HTMLSpanElement);
 
-    // `?renderer=webgpu` runs the GLSL shaders, converted by Babylon, on its WebGPU engine where the browser supports it, WebGL otherwise.
+    // `?renderer=webgpu` runs on the WebGPU engine of Babylon where the browser supports it, WebGL otherwise.
     const requestedRenderer = new URLSearchParams(window.location.search).get("renderer") === "webgpu" ? "webgpu" : "webgl";
     const { engine, renderer } = await createGeospatialRendererEngine(canvas, requestedRenderer);
     const scene = createGeospatialScene(engine, { clearColor: new Color4(0.027, 0.082, 0.176, 1) });
@@ -113,7 +113,7 @@ async function run(): Promise<void> {
     });
     status.textContent = "Loading Google Photorealistic 3D Tiles...";
     await driver.start();
-    status.textContent = `${config.latitudeDegrees.toFixed(4)}, ${config.longitudeDegrees.toFixed(4)} | ${renderer === "webgpu" ? "GLSL converted for WebGPU" : "WebGL"}`;
+    status.textContent = `${config.latitudeDegrees.toFixed(4)}, ${config.longitudeDegrees.toFixed(4)} | ${renderer === "webgpu" ? "WebGPU" : "WebGL"}`;
     engine.runRenderLoop(() => scene.render());
 
     // Objects of the example, for probes run from the browser console.

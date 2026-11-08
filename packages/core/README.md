@@ -58,11 +58,11 @@ const content = new BabylonGltfTileAdapter(scene, {
 
 ## Renderer status
 
-**This package renders with WebGL. Every shader is written in GLSL, and none is written for WebGPU.** Running on the WebGPU engine of Babylon.js only checks that those shaders survive its conversion to WGSL: it is not a WebGPU implementation, and it brings no WebGPU technique such as storage buffers or compute shaders.
+**The adapter renders with WebGL from its GLSL shaders, and with WebGPU from WGSL shaders written for it; the two are compared pixel by pixel with `npm run compare:renderers`.** It brings no technique proper to WebGPU, such as storage buffers or compute shaders.
 
 `createGeospatialRendererEngine(canvas, "webgpu")` creates that engine where the browser supports WebGPU and a WebGL engine otherwise, and reports which one it created. Support is checked before the canvas is bound, since a canvas holding a WebGPU context can no longer hold a WebGL one. The WebGPU engine requests the maximum limits of the adapter: WebGPU only guarantees 256 texture array layers.
 
-On that engine, Babylon converts the GLSL shaders to WGSL with its glslang and twgsl compilers, downloaded from the Babylon.js CDN on first use. glTF content, the geospatial camera, large world rendering, picking, the runtime, imagery draping and both terrain engines run through this conversion. The code of this package specific to that engine only creates it, writes and copies texture array layers, and registers its frame timing. `TextureArrayPool` writes single layers with `texSubImage3D` on WebGL 2 and with Babylon's texture helper on WebGPU, where growing the array also copies float layers. Materials carrying the GLSL drape plugin are created with `forceGLSL`, so that Babylon converts them as a whole on WebGPU. The GPU terrain engine interleaves its instance attributes in one vertex buffer: WebGPU devices may bind only 8 vertex buffers to a pipeline.
+On that engine, the GPU terrain engine and the imagery drape of the mesh engine run their WGSL shaders, the twins of their GLSL shaders under `shaders/wgsl`, which compute the same values in the same order. The materials of Babylon.js, such as the standard material of the mesh engine, run the WGSL of Babylon.js. The code of this package specific to that engine creates it, selects the WGSL shaders, writes and copies texture array layers, and registers its frame timing. `TextureArrayPool` writes single layers with `texSubImage3D` on WebGL 2 and with Babylon's texture helper on WebGPU, where growing the array also copies float layers. The GPU terrain engine interleaves its instance attributes in one vertex buffer: WebGPU devices may bind only 8 vertex buffers to a pipeline.
 
 ```ts
 const { engine, renderer } = await createGeospatialRendererEngine(canvas, "webgpu");
@@ -99,6 +99,10 @@ engine.runRenderLoop(() => {
 });
 ```
 
+## Terrain on a moving body
+
+`new GpuTerrainEngine(inputs, { root })` accepts an optional rigid `TransformNode` mapping body-fixed metres to the render scene. The runtime camera, tile addresses and DEM stay body-fixed. The engine converts the scene's floating-origin eye to that frame, subtracts tile centres in double precision, then applies the root rotation to camera-relative vertices in the existing shader. Lighting is converted to body axes, and CPU picking grids inherit the root and its metadata. With no root, the existing ECEF behaviour is unchanged. Register `terrain.grid.mesh` with the body's directional light when the scene contains lights scoped through `includedOnlyMeshes`. All rendered surfaces must share the terrain shader's projected-depth convention.
+
 ## Monitoring
 
 ```ts
@@ -112,22 +116,11 @@ engine.runRenderLoop(() => {
 
 GPU frame time requires GPU timer queries. The monitor registers the time query extensions of WebGL and WebGPU. On WebGPU, timestamp queries are a device feature: `createGeospatialWebGPUEngine` enables every feature of the adapter, timestamp queries included; an engine created otherwise needs `enableAllFeatures` or the `timestamp-query` feature in its device descriptor.
 
-## Whole bodies
+## Cameras
 
-`GpuTerrainEngine` renders any tiling. `ITerrainTiling` tells it where tiles lie and how they connect: `webMercatorTiling` by default, `cubeTiling` for a whole body on the cube index, poles included. `createCubeGridSource` builds the implicit quadtrees of the six faces. On the cube, heights are radial, the DEM of a tile on another face is read turned, and normals are computed at each pixel from the DEM. Babylon's `GeospatialCamera` keeps its centre about 2.87 degrees away from the poles and measures its yaw from the north. `OrbitalCamera` has no north in its state, so it can centre on a pole and cross it: drag to pan, drag with the right or middle button or with Ctrl to turn and tilt, use the wheel or a pinch to zoom, two fingers to turn, the arrow keys to pan, `+` and `-` to zoom, `Q` and `E` to turn, `Page Up` and `Page Down` to tilt. `MeshTerrainEngine` renders Web Mercator only.
+Babylon's `GeospatialCamera` keeps its centre about 2.87 degrees away from the poles and measures its yaw from the north. `OrbitalCamera` has no north in its state, so it can centre on a pole and cross it: drag to pan, drag with the right or middle button or with Ctrl to turn and tilt, use the wheel or a pinch to zoom, two fingers to turn, the arrow keys to pan, `+` and `-` to zoom, `Q` and `E` to turn, `Page Up` and `Page Down` to tilt.
 
-```ts
-import { createCubeGridSource, cubeTiling, GpuTerrainEngine } from "@spacexr/3d-tiles-babylon";
-import { CUBE_TILE_TOPOLOGY, CubeTileSurface, ReferenceSurface } from "@spacexr/tiles";
-
-const surface = new CubeTileSurface(ReferenceSurface.sphere(1737400));
-// The geometric error of terrain tiles follows the cells of the grid.
-const source = createCubeGridSource(surface, prepared, { maxLOD: 14, tileSize: 16 });
-const terrain = new GpuTerrainEngine({ ...inputs, tiling: cubeTiling(surface) });
-// Balance the runtime across faces: quadtreeBalance: { topology: CUBE_TILE_TOPOLOGY }
-```
-
-Elevation and imagery tiles hold their shared edges: pyramids take `registration: "point"`. See `docs/celestial-tiling.md` of 3d-tiles-core.
+The terrain engines render Web Mercator. The cube index of whole bodies is on the `experimental/cube` branch until it is validated.
 
 ## License
 

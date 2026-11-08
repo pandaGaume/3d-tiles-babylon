@@ -37,19 +37,14 @@ describe("bench scenarios", () => {
         expect(new Set(scenarios.map((scenario) => scenario.id)).size).toBe(scenarios.length);
     });
 
-    it("covers the places the pipeline must validate", () => {
-        expect(BENCH_VIEWS.map((view) => view.name)).toEqual(
-            expect.arrayContaining(["face-edge", "turned-edge", "cube-vertex", "pole", "cap-border"]),
-        );
-        expect(new Set(BENCH_VIEWS.map((view) => view.projection))).toEqual(new Set(["mercator", "cube"]));
+    it("covers a turn and a zoom on Web Mercator", () => {
+        expect(BENCH_VIEWS.map((view) => view.name)).toEqual(["mont-blanc", "mont-blanc-zoom"]);
     });
 
-    it("asks for the engine, and for a dataset on the cube only", () => {
-        const scenarios = benchScenarios("http://localhost:5174", "http://127.0.0.1:8793");
-        const cube = scenarios.find((scenario) => scenario.id === "pole/mesh")!;
-        expect(cube.url).toContain("http://localhost:5174/?body=moon&dataset=http://127.0.0.1:8793&engine=mesh&");
-        expect(scenarios.find((scenario) => scenario.id === "mont-blanc/gpu")!.url).not.toContain("body=moon");
-        expect(benchScenarios("http://localhost:5174").find((scenario) => scenario.id === "pole/gpu")!.url).not.toContain("dataset");
+    it("asks for the engine in the address of the example", () => {
+        const scenarios = benchScenarios("http://localhost:5174");
+        expect(scenarios.find((scenario) => scenario.id === "mont-blanc/mesh")!.url).toContain("http://localhost:5174/?engine=mesh&");
+        expect(scenarios.find((scenario) => scenario.id === "mont-blanc/gpu")!.url).toContain("engine=gpu");
     });
 });
 

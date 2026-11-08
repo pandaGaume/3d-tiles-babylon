@@ -12,16 +12,15 @@ function planeToRuntimePlane(plane: Plane): IPlane {
 /** Options of {@link createEcefCameraFrame}. */
 export interface IEcefCameraFrameOptions {
     /**
-     * Widens the frustum tiles are selected in, as a fraction of the half extent of the view: 0.25 reaches a quarter
-     * further on each side. Tiles are selected for a camera that has already moved when they are drawn, so without a
-     * margin the edges of the image lack terrain while the camera turns. Defaults to 0.
+     * Periphery of the view, where tiles stay active without being visible, as a fraction of the half extent of the view.
+     * Tiles are selected for a camera that has already moved when they are drawn, so without a periphery the edges of the
+     * image lack terrain while the camera turns. Defaults to 0: no periphery.
      */
     frustumMargin?: number;
 }
 
 /** View and projection of a camera, the projection widened by a margin. */
 function cullingTransform(camera: Camera, margin: number): Matrix {
-    if (margin <= 0) return camera.getTransformationMatrix();
     const projection = Array.from(camera.getProjectionMatrix().m);
     projection[0]! /= 1 + margin;
     projection[5]! /= 1 + margin;
@@ -33,6 +32,7 @@ function cullingTransform(camera: Camera, margin: number): Matrix {
  * which `useLargeWorldRendering` keeps precise on the GPU.
  */
 export function createEcefCameraFrame(camera: Camera, engine: AbstractEngine, options: IEcefCameraFrameOptions = {}): IEcefCameraFrame {
+    const margin = options.frustumMargin ?? 0;
     return {
         id: camera.id,
         position: {
@@ -42,7 +42,8 @@ export function createEcefCameraFrame(camera: Camera, engine: AbstractEngine, op
         },
         viewportHeight: engine.getRenderHeight() * camera.viewport.height,
         verticalFovRadians: camera.fov,
-        frustumPlanes: Frustum.GetPlanes(cullingTransform(camera, options.frustumMargin ?? 0)).map(planeToRuntimePlane),
+        frustumPlanes: Frustum.GetPlanes(camera.getTransformationMatrix()).map(planeToRuntimePlane),
+        ...(margin > 0 ? { peripheryFrustumPlanes: Frustum.GetPlanes(cullingTransform(camera, margin)).map(planeToRuntimePlane) } : {}),
         timestamp: performance.now(),
     };
 }

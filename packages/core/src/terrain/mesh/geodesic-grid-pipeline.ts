@@ -22,6 +22,8 @@ import {
 } from "@spacexr/3d-tiles-runtime";
 import { JunctionGridTopologyCache, type IGridTopology, SAME_EDGE_LODS, edgeLodsKey, type GridEdgeLods } from "@spacexr/grid";
 import { selectSurfaceLevels, type DemPyramid, type SurfaceLevelPolicy } from "@spacexr/dem";
+import { TileNeighbor, tileAddressKey } from "@spacexr/tiles";
+import { sampleRasterBilinear } from "@spacexr/raster";
 import { DisplayedTiles, type JunctionPolicy } from "../displayed-tiles";
 import { TERRAIN_CONFIG } from "../terrain-config";
 import { regionWithHeights, tileIdentity, tileRegion } from "../terrain-tile";
@@ -80,6 +82,11 @@ export interface IBabylonGeodesicGridPipelineOptions {
      * The rest waits for the next frames. Defaults to {@link TERRAIN_CONFIG}.
      */
     junctionBudgetMilliseconds?: number;
+    /**
+     * With `runtime`, the published geometry cut is authoritative: hidden tiles do not remain edge neighbours,
+     * and every changed junction is rebuilt before the next draw. Defaults to the existing draped behaviour.
+     */
+    geometrySelection?: "runtime" | "draped";
 }
 
 /**
@@ -100,6 +107,30 @@ interface IJunctionRebuild {
 
 /** Height in metres at normalized tile coordinates, `u` west to east and `v` north to south. */
 type HeightSampler = (u: number, v: number) => number;
+
+/** Shared levels sampled on N, E, S, W, NW, NE, SE and SW of a runtime-owned grid. */
+type BoundarySurfaceLevels = readonly (readonly number[])[];
+
+/** A regular vertex lattice kept while only its border topology changes. */
+interface IRuntimeGridCache {
+    elevated: IElevatedGridGeometry;
+    positions: Float32Array;
+    normals: Float32Array;
+    orientation: Int8Array;
+    boundaryVertices: number[];
+    ownDem: string;
+}
+
+const BORDER_NEIGHBORS = [
+    TileNeighbor.N,
+    TileNeighbor.E,
+    TileNeighbor.S,
+    TileNeighbor.W,
+    TileNeighbor.NW,
+    TileNeighbor.NE,
+    TileNeighbor.SE,
+    TileNeighbor.SW,
+] as const;
 
 function lodColor(lod: number): string {
     return LOD_COLORS[lod % LOD_COLORS.length]!;
@@ -130,6 +161,12 @@ export class BabylonGeodesicGridPipeline
     private readonly subdivisions: number;
     private junctionsDirty = false;
     private readonly junctionBudgetMilliseconds: number;
+    private readonly runtimeGeometry: boolean;
+    private readonly runtimeGrids = new Map<IBabylonGeodesicGridHandle, IRuntimeGridCache>();
+    private readonly runtimeIndices = new Map<number, Uint32Array>();
+    private readonly gridDependencyKeys = new Map<IBabylonGeodesicGridHandle, Set<string>>();
+    private readonly gridsByDem = new Map<string, Set<IBabylonGeodesicGridHandle>>();
+    private readonly stopObservingDem: (() => void) | undefined;
     private readonly labelLayer: HTMLElement;
     private readonly scene: Scene;
     private readonly wireframe: boolean;
@@ -148,6 +185,7 @@ export class BabylonGeodesicGridPipeline
     ) {
         this.scene = scene;
         this.tiling = options.tiling ?? webMercatorTiling();
+        this.runtimeGeometry = options.geometrySelection === "runtime";
         this.displayed = new DisplayedTiles({
             topology: this.tiling.topology,
             onTrack: (address) => this.elevation?.pyramid.retain(address),
@@ -164,6 +202,9 @@ export class BabylonGeodesicGridPipeline
         this.junctionBudgetMilliseconds = options.junctionBudgetMilliseconds ?? TERRAIN_CONFIG.mesh.junctionBudgetMilliseconds;
         this.subdivisions = subdivisions;
         this.topologies = new JunctionGridTopologyCache(subdivisions);
+        this.stopObservingDem = this.runtimeGeometry
+            ? this.elevation?.pyramid.rasters.observeStitched((changed) => this.invalidateRuntimeGrids(changed))
+            : undefined;
     }
 
     public async activate(context: ITileActivationContext<IEcefSpatialState, IBabylonGeodesicGridHandle, never>): Promise<void> {
@@ -172,8 +213,12 @@ export class BabylonGeodesicGridPipeline
                 await context.readiness.cancelled(content.id);
                 continue;
             }
+            const pendingDem = this.runtimeGeometry && this.elevation ? tileIdentity(context) : undefined;
+            if (pendingDem) this.elevation!.pyramid.retain(pendingDem);
             try {
                 const heights = await this.elevation?.pyramid.tileHeights(tileIdentity(context), context.signal);
+                if (this.runtimeGeometry && this.elevation && !heights)
+                    throw new Error(`No DEM data serves terrain tile ${context.tile.id}.`);
                 if (context.signal.aborted) {
                     await context.readiness.cancelled(content.id);
                     continue;
@@ -191,25 +236,9 @@ export class BabylonGeodesicGridPipeline
                     // The tile starts at 0/0; its DEM gives the measured height range.
                     ...(heights && !Number.isNaN(heights.range.minimum) && !Number.isNaN(heights.range.maximum)
                         ? {
-                              tileBoundingVolume: () =>
-                                  this.tiling.boundingBox
-                                      ? {
-                                            box: this.tiling.boundingBox(
-                                                tileIdentity(context),
-                                                heights.range.minimum * this.verticalScale.value,
-                                                heights.range.maximum * this.verticalScale.value,
-                                            ) as never,
-                                        }
-                                      : { region: regionWithHeights(tileRegion(context), heights.range, this.verticalScale.value) },
-                              ...(this.tiling.boundingBox
-                                  ? {
-                                        tileHeightRange: () =>
-                                            [
-                                                heights.range.minimum * this.verticalScale.value,
-                                                heights.range.maximum * this.verticalScale.value,
-                                            ] as const,
-                                    }
-                                  : {}),
+                              tileBoundingVolume: () => ({
+                                  region: regionWithHeights(tileRegion(context), heights.range, this.verticalScale.value),
+                              }),
                           }
                         : {}),
                 });
@@ -217,6 +246,8 @@ export class BabylonGeodesicGridPipeline
             } catch (error) {
                 if (context.signal.aborted) await context.readiness.cancelled(content.id);
                 else await context.readiness.failed(content.id, error);
+            } finally {
+                if (pendingDem) this.elevation!.pyramid.release(pendingDem);
             }
         }
     }
@@ -229,28 +260,33 @@ export class BabylonGeodesicGridPipeline
         for (const resource of context.resources) {
             const handle = resource.handle;
             handle.metadataHandle = resource.metadataHandle;
-            if (!handle.presented) this.displayed.add(handle.identity);
+            if (handle.presented) continue;
+            this.displayed.add(handle.identity);
             handle.presented = true;
             handle.mesh.isVisible = true;
+            this.junctionsDirty = true;
             // A tile shown again after its DEM left the cache reloads it, then rebuilds its edges.
             const pyramid = this.elevation?.pyramid;
             if (pyramid && handle.heightAt && !pyramid.isResident(handle.identity))
                 void pyramid.tileHeights(handle.identity).then(() => {
+                    if (this.runtimeGeometry && !handle.presented) return;
                     handle.edgeLevels = "";
                     this.junctionsDirty = true;
                 });
         }
-        this.junctionsDirty = true;
     }
 
     public hide(context: ITilePresentationContext<IEcefSpatialState, IBabylonGeodesicGridHandle, never>): void {
         for (const resource of context.resources) {
-            if (resource.handle.presented) this.displayed.hide(resource.handle.identity);
-            resource.handle.presented = false;
-            resource.handle.mesh.isVisible = false;
-            resource.handle.label.style.display = "none";
+            const handle = resource.handle;
+            if (!handle.presented) continue;
+            if (this.runtimeGeometry) this.displayed.delete(handle.identity);
+            else this.displayed.hide(handle.identity);
+            handle.presented = false;
+            handle.mesh.isVisible = false;
+            handle.label.style.display = "none";
+            this.junctionsDirty = true;
         }
-        this.junctionsDirty = true;
     }
 
     public release(context: ITilePresentationContext<IEcefSpatialState, IBabylonGeodesicGridHandle, never>): void {
@@ -267,7 +303,8 @@ export class BabylonGeodesicGridPipeline
      * for the next frames, so that a wave of loaded tiles does not stall one
      * frame. Topology changes, which open cracks, go before edge heights, and
      * nearer grids before farther ones; one grid is rebuilt in every frame
-     * whatever its cost, so that the backlog always shrinks.
+     * whatever its cost, so that the backlog always shrinks. With runtime-owned geometry all changes finish before
+     * drawing, since a delayed edge update would expose a cut whose junctions belong to an earlier frame.
      */
     public updateJunctions(): void {
         if (!this.junctionsDirty) return;
@@ -291,9 +328,11 @@ export class BabylonGeodesicGridPipeline
             else if (edgeLevels !== handle.edgeLevels) heightChanges.push(rebuild);
         }
         const nearestFirst = (left: IJunctionRebuild, right: IJunctionRebuild): number => left.distance - right.distance;
-        const rebuilds = [...topologyChanges.sort(nearestFirst), ...heightChanges.sort(nearestFirst)];
+        const rebuilds = this.runtimeGeometry
+            ? [...topologyChanges, ...heightChanges]
+            : [...topologyChanges.sort(nearestFirst), ...heightChanges.sort(nearestFirst)];
         for (const [index, { handle, lods, edgeLevels }] of rebuilds.entries()) {
-            if (index > 0 && performance.now() - start >= this.junctionBudgetMilliseconds) {
+            if (!this.runtimeGeometry && index > 0 && performance.now() - start >= this.junctionBudgetMilliseconds) {
                 this.junctionsDirty = true;
                 return;
             }
@@ -340,6 +379,7 @@ export class BabylonGeodesicGridPipeline
 
     public dispose(): void {
         this.stopVerticalScale();
+        this.stopObservingDem?.();
         for (const handle of [...this.handles]) this.disposeHandle(handle);
         for (const material of this.materialsByLod.values()) material.dispose();
         this.materialsByLod.clear();
@@ -383,6 +423,11 @@ export class BabylonGeodesicGridPipeline
     private applyVerticalScale(scale: number): void {
         for (const handle of this.handles) {
             if (!handle.elevated) continue;
+            if (this.runtimeGeometry && this.junctions !== "coarse") {
+                this.runtimeGrids.delete(handle);
+                this.applyGeometry(handle, handle.lods);
+                continue;
+            }
             const positions = composeElevatedPositions(handle.elevated, scale);
             const normals = this.surfaceNormals(handle, this.topologies.get(handle.lods), handle.elevated, positions);
             handle.mesh.updateVerticesData(VertexBuffer.PositionKind, positions);
@@ -428,6 +473,8 @@ export class BabylonGeodesicGridPipeline
         handle.edgeLevels = heightAt ? this.edgeLevelsSignature(identity) : "";
         this.handles.add(handle);
         this.drape?.add(mesh, identity);
+        // A cached ready ancestor must keep the DEM needed when it becomes the coverage fallback again.
+        if (this.runtimeGeometry && heightAt) this.elevation!.pyramid.retain(identity);
         this.createdHandleCount++;
         return handle;
     }
@@ -453,6 +500,8 @@ export class BabylonGeodesicGridPipeline
         topology: IGridTopology,
         elevated: IElevatedGridGeometry,
         positions: number[],
+        levelsAt?: (u: number, v: number) => readonly number[],
+        gradientAt?: (u: number, v: number) => readonly [number, number] | undefined,
     ): number[] {
         const normals: number[] = [];
         VertexData.ComputeNormals(positions, elevated.indices, normals);
@@ -466,13 +515,15 @@ export class BabylonGeodesicGridPipeline
             const y = (row + v) / count;
             // One grid cell at the displayed level: the samples fall on the neighbouring vertices, so normals
             // describe the mesh surface rather than DEM detail the triangles cannot show.
-            const gradient = pyramid.surfaceGradient(
-                x,
-                y,
-                this.surfaceLevels(handle.identity, u, v),
-                this.subdivisions,
-                handle.identity.face ?? 0,
-            );
+            const gradient = gradientAt
+                ? gradientAt(u, v)
+                : pyramid.surfaceGradient(
+                      x,
+                      y,
+                      levelsAt?.(u, v) ?? this.surfaceLevels(handle.identity, u, v),
+                      this.subdivisions,
+                      handle.identity.face ?? 0,
+                  );
             if (!gradient) continue;
             const up = {
                 x: elevated.up[vertex * 3]!,
@@ -492,11 +543,19 @@ export class BabylonGeodesicGridPipeline
 
     /** Levels around a tile, to detect when its edge heights change: the levels at each edge vertex depend only on them. */
     private edgeLevelsSignature(tile: ITileAddress): string {
+        if (this.runtimeGeometry)
+            return this.boundarySurfaceLevels(tile)
+                .map((levels) => levels.join("/"))
+                .join(",");
         return this.displayed.boundarySignature(tile);
     }
 
     /** Builds the grid of a tile for the given neighbour levels and uploads it to its mesh. */
     private applyGeometry(handle: IBabylonGeodesicGridHandle, lods: GridEdgeLods): void {
+        if (this.runtimeGeometry && this.junctions !== "coarse" && handle.heightAt) {
+            this.applyRuntimeGeometry(handle, lods);
+            return;
+        }
         const topology = this.topologies.get(lods);
         const ownHeight = handle.heightAt;
         const { lod, x: column, y: row } = handle.identity;
@@ -541,13 +600,227 @@ export class BabylonGeodesicGridPipeline
             geometry.indices.byteLength;
     }
 
+    /** Effective sampled levels: an absent, same-level or finer neighbour is identical under `coarsest`. */
+    private boundarySurfaceLevels(tile: ITileAddress): BoundarySurfaceLevels {
+        const across = BORDER_NEIGHBORS.map((neighbor) => this.displayed.lodAcross(tile, neighbor));
+        const choose = (...positions: number[]): readonly number[] => {
+            const levels = new Set([tile.lod]);
+            for (const position of positions) {
+                const level = across[position];
+                if (level !== undefined) levels.add(level);
+            }
+            return selectSurfaceLevels(
+                [...levels].sort((left, right) => left - right),
+                this.edgeHeights,
+            );
+        };
+        return [choose(0), choose(1), choose(2), choose(3), choose(0, 3, 4), choose(0, 1, 5), choose(2, 1, 6), choose(2, 3, 7)];
+    }
+
+    private levelsOnBoundary(boundary: BoundarySurfaceLevels, u: number, v: number): readonly number[] {
+        if (u === 0 && v === 0) return boundary[4]!;
+        if (u === 1 && v === 0) return boundary[5]!;
+        if (u === 1 && v === 1) return boundary[6]!;
+        if (u === 0 && v === 1) return boundary[7]!;
+        return boundary[v === 0 ? 0 : u === 1 ? 1 : v === 1 ? 2 : 3]!;
+    }
+
+    /** Coarser/Same variants keep one regular vertex buffer and only change its index list. */
+    private runtimeTopologyIndices(lods: GridEdgeLods): Uint32Array {
+        const key = edgeLodsKey(lods);
+        const existing = this.runtimeIndices.get(key);
+        if (existing) return existing;
+        const topology = this.topologies.get(lods);
+        const lattice = new Uint32Array(topology.coordinates.length / 2);
+        for (let vertex = 0; vertex < lattice.length; vertex++) {
+            const column = Math.round(topology.coordinates[vertex * 2]! * this.subdivisions);
+            const row = Math.round(topology.coordinates[vertex * 2 + 1]! * this.subdivisions);
+            lattice[vertex] = row * (this.subdivisions + 1) + column;
+        }
+        const indices = Uint32Array.from(topology.indices, (vertex) => lattice[vertex]!);
+        this.runtimeIndices.set(key, indices);
+        return indices;
+    }
+
+    private createRuntimeGrid(handle: IBabylonGeodesicGridHandle): IRuntimeGridCache {
+        const topology = this.topologies.get(SAME_EDGE_LODS);
+        const { lod } = handle.identity;
+        const ownLevels = [lod];
+        const pyramid = this.elevation!.pyramid;
+        const area = pyramid.rasters.areaOf(handle.identity);
+        const grid = pyramid.rasters.stitchedGrid(area.ancestor);
+        // The own DEM is retained while this handle is ready. Sample its sub-area directly: interior stencils
+        // never leave it and must not use the coarser surface selected for an edge.
+        const heightAt: HeightSampler = grid
+            ? (u, v) => sampleRasterBilinear(grid, area.west + u * area.size, area.north + v * area.size, 0, "point")
+            : handle.heightAt!;
+        const elevated = projectElevatedGrid(topology, handle.identity, this.tiling.surface, heightAt);
+        const positions = composeElevatedPositions(elevated, this.verticalScale.value);
+        const step = 1 / this.subdivisions;
+        const inverseWorldStep = this.subdivisions * 2 ** lod;
+        const gradientAt = (u: number, v: number): readonly [number, number] | undefined => {
+            // Boundaries are evaluated once below, from the shared pyramid surface.
+            if (u === 0 || u === 1 || v === 0 || v === 1) return undefined;
+            const difference = (before: number, after: number): number | undefined => {
+                if (!Number.isNaN(before) && !Number.isNaN(after)) return (after - before) * 0.5 * inverseWorldStep;
+                const center = heightAt(u, v);
+                if (!Number.isNaN(after) && !Number.isNaN(center)) return (after - center) * inverseWorldStep;
+                if (!Number.isNaN(before) && !Number.isNaN(center)) return (center - before) * inverseWorldStep;
+                return undefined;
+            };
+            const east = difference(heightAt(u - step, v), heightAt(u + step, v));
+            const south = difference(heightAt(u, v - step), heightAt(u, v + step));
+            return east === undefined || south === undefined ? undefined : [east, south];
+        };
+        const normals = this.surfaceNormals(handle, topology, elevated, positions, () => ownLevels, gradientAt);
+        const boundaryVertices: number[] = [];
+        const orientation = new Int8Array(elevated.heights.length);
+        for (let vertex = 0; vertex < elevated.heights.length; vertex++) {
+            const u = topology.coordinates[vertex * 2]!;
+            const v = topology.coordinates[vertex * 2 + 1]!;
+            if (u === 0 || u === 1 || v === 0 || v === 1) boundaryVertices.push(vertex);
+            const offset = vertex * 3;
+            orientation[vertex] =
+                normals[offset]! * elevated.up[offset]! +
+                    normals[offset + 1]! * elevated.up[offset + 1]! +
+                    normals[offset + 2]! * elevated.up[offset + 2]! <
+                0
+                    ? -1
+                    : 1;
+        }
+        return {
+            elevated,
+            positions: Float32Array.from(positions),
+            normals: Float32Array.from(normals),
+            orientation,
+            boundaryVertices,
+            ownDem: tileAddressKey(pyramid.rasters.areaOf(handle.identity).ancestor),
+        };
+    }
+
+    /** Re-evaluates the perimeter; the positions and normals of interior vertices remain cached. */
+    private applyRuntimeGeometry(handle: IBabylonGeodesicGridHandle, lods: GridEdgeLods): void {
+        let cache = this.runtimeGrids.get(handle);
+        const fresh = cache === undefined;
+        if (!cache) {
+            cache = this.createRuntimeGrid(handle);
+            this.runtimeGrids.set(handle, cache);
+        }
+        const topology = this.topologies.get(SAME_EDGE_LODS);
+        const boundary = this.boundarySurfaceLevels(handle.identity);
+        const { lod, x: column, y: row } = handle.identity;
+        const count = 2 ** lod;
+        const pyramid = this.elevation!.pyramid;
+        const scale = this.verticalScale.value;
+        for (const vertex of cache.boundaryVertices) {
+            const u = topology.coordinates[vertex * 2]!;
+            const v = topology.coordinates[vertex * 2 + 1]!;
+            const levels = this.levelsOnBoundary(boundary, u, v);
+            const x = (column + u) / count;
+            const y = (row + v) / count;
+            const sampled = pyramid.surfaceHeight(x, y, levels, handle.identity.face ?? 0);
+            const height = Number.isNaN(sampled) ? handle.heightAt!(u, v) : sampled;
+            cache.elevated.heights[vertex] = height;
+            const offset = vertex * 3;
+            for (let axis = 0; axis < 3; axis++)
+                cache.positions[offset + axis] =
+                    cache.elevated.base[offset + axis]! + cache.elevated.up[offset + axis]! * cache.elevated.heights[vertex]! * scale;
+            const gradient = pyramid.surfaceGradient(x, y, levels, this.subdivisions, handle.identity.face ?? 0);
+            if (gradient) {
+                const up = { x: cache.elevated.up[offset]!, y: cache.elevated.up[offset + 1]!, z: cache.elevated.up[offset + 2]! };
+                const normal = this.tiling.surfaceNormal(handle.identity, u, v, up, gradient, scale);
+                const side = cache.orientation[vertex]!;
+                cache.normals[offset] = normal.x * side;
+                cache.normals[offset + 1] = normal.y * side;
+                cache.normals[offset + 2] = normal.z * side;
+            }
+        }
+        const indices = this.runtimeTopologyIndices(lods);
+        cache.elevated = { ...cache.elevated, indices };
+        if (fresh) {
+            const data = new VertexData();
+            data.positions = cache.positions;
+            data.normals = cache.normals;
+            data.uvs = cache.elevated.uvs;
+            data.indices = indices;
+            data.applyToMesh(handle.mesh, true);
+        } else {
+            handle.mesh.updateVerticesData(VertexBuffer.PositionKind, cache.positions);
+            handle.mesh.updateVerticesData(VertexBuffer.NormalKind, cache.normals);
+            if (edgeLodsKey(lods) !== edgeLodsKey(handle.lods)) handle.mesh.setIndices(indices);
+            handle.mesh.refreshBoundingInfo();
+        }
+        handle.elevated = cache.elevated;
+        handle.lods = lods;
+        handle.estimatedCpuBytes =
+            (cache.positions.length + cache.normals.length) * Float64Array.BYTES_PER_ELEMENT +
+            cache.elevated.uvs.byteLength +
+            indices.byteLength;
+        handle.estimatedGpuBytes =
+            (cache.positions.length + cache.normals.length) * Float32Array.BYTES_PER_ELEMENT +
+            cache.elevated.uvs.byteLength +
+            indices.byteLength;
+        this.trackRuntimeDependencies(handle, cache, boundary);
+    }
+
+    /** Reverse data dependencies distinguish changed interior samples from neighbouring height/normal updates. */
+    private trackRuntimeDependencies(handle: IBabylonGeodesicGridHandle, cache: IRuntimeGridCache, boundary: BoundarySurfaceLevels): void {
+        this.forgetRuntimeDependencies(handle);
+        const pyramid = this.elevation!.pyramid;
+        const keys = new Set([cache.ownDem]);
+        const levels = new Set([handle.identity.lod, ...boundary.flat()]);
+        for (const level of levels) {
+            const scale = 2 ** (level - handle.identity.lod);
+            const firstX = Math.floor(handle.identity.x * scale);
+            const firstY = Math.floor(handle.identity.y * scale);
+            const lastX = Math.max(firstX, Math.ceil((handle.identity.x + 1) * scale) - 1);
+            const lastY = Math.max(firstY, Math.ceil((handle.identity.y + 1) * scale) - 1);
+            for (let y = firstY; y <= lastY; y++)
+                for (let x = firstX; x <= lastX; x++) {
+                    const address = { ...handle.identity, lod: level, x, y };
+                    keys.add(tileAddressKey(pyramid.rasters.areaOf(address).ancestor));
+                    for (const position of BORDER_NEIGHBORS) {
+                        const neighbor = this.tiling.topology.neighbor(address, position)?.address;
+                        if (neighbor) keys.add(tileAddressKey(pyramid.rasters.areaOf(neighbor).ancestor));
+                    }
+                }
+        }
+        this.gridDependencyKeys.set(handle, keys);
+        for (const key of keys) {
+            let handles = this.gridsByDem.get(key);
+            if (!handles) this.gridsByDem.set(key, (handles = new Set()));
+            handles.add(handle);
+        }
+    }
+
+    private forgetRuntimeDependencies(handle: IBabylonGeodesicGridHandle): void {
+        for (const key of this.gridDependencyKeys.get(handle) ?? []) {
+            const handles = this.gridsByDem.get(key);
+            handles?.delete(handle);
+            if (handles?.size === 0) this.gridsByDem.delete(key);
+        }
+        this.gridDependencyKeys.delete(handle);
+    }
+
+    private invalidateRuntimeGrids(changed: readonly ITileAddress[]): void {
+        const keys = new Set(changed.map(tileAddressKey));
+        const affected = new Set<IBabylonGeodesicGridHandle>();
+        for (const key of keys) for (const handle of this.gridsByDem.get(key) ?? []) affected.add(handle);
+        for (const handle of affected) {
+            const cache = this.runtimeGrids.get(handle);
+            if (cache && keys.has(cache.ownDem)) this.runtimeGrids.delete(handle);
+            handle.edgeLevels = "";
+            if (handle.presented) this.junctionsDirty = true;
+        }
+    }
+
     private materialForLod(lod: number): StandardMaterial {
         const existing = this.materialsByLod.get(lod);
         if (existing) return existing;
 
         const color = Color3.FromHexString(lodColor(lod));
-        // The drape plugin is written in GLSL: on WebGPU, Babylon converts the whole material to WGSL.
-        const material = new StandardMaterial(`geodesic-grid-material-lod-${lod}`, this.scene, this.drape !== undefined);
+        // GLSL on WebGL, WGSL on WebGPU: the drape plugin is written in both.
+        const material = new StandardMaterial(`geodesic-grid-material-lod-${lod}`, this.scene);
         material.specularColor = Color3.Black();
         if (this.wireframe) {
             material.diffuseColor = color.scale(0.55);
@@ -574,11 +847,14 @@ export class BabylonGeodesicGridPipeline
 
     private disposeHandle(handle: IBabylonGeodesicGridHandle): void {
         if (!this.handles.delete(handle)) return;
+        this.runtimeGrids.delete(handle);
+        this.forgetRuntimeDependencies(handle);
         // A ghost leaves with its resource as well.
         if (handle.presented || this.displayed.isGhost(handle.identity)) {
             this.displayed.delete(handle.identity);
             this.junctionsDirty = true;
         }
+        if (this.runtimeGeometry && handle.heightAt) this.elevation!.pyramid.release(handle.identity);
         this.releasedHandleCount++;
         handle.label.remove();
         this.drape?.remove(handle.mesh);

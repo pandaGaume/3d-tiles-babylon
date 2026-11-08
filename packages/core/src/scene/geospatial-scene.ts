@@ -46,8 +46,8 @@ export interface IGeospatialWebGPUEngineOptions {
 /**
  * Creates a WebGPU engine for planetary ECEF coordinates, with the large world rendering of
  * {@link createGeospatialEngine}. The engine requests the maximum limits of the adapter: WebGPU only guarantees 256
- * texture array layers, fewer than the raster pages a draped terrain keeps resident. Shaders stay in GLSL, which
- * Babylon converts to WGSL, so that the same materials run on WebGL and WebGPU.
+ * texture array layers, fewer than the raster pages a draped terrain keeps resident. The terrain engines and the
+ * imagery drape run their WGSL shaders on it, and their GLSL shaders on WebGL.
  */
 export async function createGeospatialWebGPUEngine(
     canvas: HTMLCanvasElement,

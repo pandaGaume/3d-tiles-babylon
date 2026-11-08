@@ -49,6 +49,7 @@ export class MeshTerrainEngine implements ITerrainEngine<IBabylonGeodesicGridHan
                 wireframe: inputs.wireframe,
                 junctions: inputs.junctions,
                 edgeHeights: inputs.edgeHeights,
+                ...(inputs.geometrySelection ? { geometrySelection: inputs.geometrySelection } : {}),
                 ...(inputs.tiling ? { tiling: inputs.tiling } : {}),
                 ...(this.drape ? { drape: this.drape } : {}),
                 ...(inputs.elevation ? { elevation: inputs.elevation } : {}),

@@ -22,8 +22,10 @@ export interface IGeneratedShader {
     /** Path of the generated module, beside the shader file. */
     target: string;
     kind: ShaderKind;
-    /** Name of the exported constant, and key in the Babylon.js shader store. */
+    /** Key in the Babylon.js shader store. */
     name: string;
+    /** Name of the exported constant: the key, followed by `WGSL` for a WGSL file, as in Babylon.js. */
+    exportName: string;
     /** Content of the generated module. */
     content: string;
 }
@@ -80,6 +82,7 @@ export function generateShader(path: string): IGeneratedShader {
     const wgsl = path.endsWith(".wgsl");
     const body = stripShader(readFileSync(path, "utf8")).replace(/[\\`]/g, "\\$&").replace(/\$\{/g, "\\${");
     const store = `${kind === "include" ? "IncludesShadersStore" : "ShadersStore"}${wgsl ? "WGSL" : ""}`;
+    const exportName = `${name}${wgsl ? "WGSL" : ""}`;
     const lines = [
         `${GENERATED_HEADER} Edit ${basename(path)}, then run \`npm run shaders\`.`,
         ...(kind === "snippet" ? [] : ['import { ShaderStore } from "@babylonjs/core/Engines/shaderStore.js";', ""]),
@@ -87,10 +90,10 @@ export function generateShader(path: string): IGeneratedShader {
         `const shader = \`${body}\`;`,
         ...(kind === "snippet" ? [] : [`ShaderStore.${store}[name] = shader;`]),
         "/** @internal */",
-        `export const ${name} = { name, shader };`,
+        `export const ${exportName} = { name, shader };`,
         "",
     ];
-    return { source: path, target: path.replace(/\.(glsl|wgsl)$/, ".ts"), kind, name, content: lines.join("\n") };
+    return { source: path, target: path.replace(/\.(glsl|wgsl)$/, ".ts"), kind, name, exportName, content: lines.join("\n") };
 }
 
 function listFiles(root: string): string[] {

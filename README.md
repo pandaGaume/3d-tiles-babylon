@@ -15,38 +15,52 @@ The runtime owns traversal, level of detail, loading and caching. This repositor
 packages/core/                         @spacexr/3d-tiles-babylon
 examples/babylon-google-3d-tiles/      Google Photorealistic 3D Tiles
 examples/babylon-implicit-grid-mapzen/ Implicit WebMercator quadtree with Mapzen elevation
+docs/                                  Terrain settings and how to set them
 ```
+
+Every terrain setting, its default and the URL parameter that overrides it are listed in [Terrain settings](docs/terrain-settings.md).
 
 ## Usage
 
 ```ts
 import "@babylonjs/loaders/glTF/2.0/index.js";
 import {
-    BabylonGltfTileAdapter,
-    BabylonRuntimeDriver,
-    createGeospatialCamera,
-    createGeospatialEngine,
-    createGeospatialScene,
+  BabylonGltfTileAdapter,
+  BabylonRuntimeDriver,
+  createGeospatialCamera,
+  createGeospatialEngine,
+  createGeospatialScene,
 } from "@spacexr/3d-tiles-babylon";
 import { TilesetJsonCodec } from "@spacexr/3d-tiles-core";
-import { EcefSpatialMetric, TileRuntime, type ITilesetLoader } from "@spacexr/3d-tiles-runtime";
+import {
+  EcefSpatialMetric,
+  TileRuntime,
+  type ITilesetLoader,
+} from "@spacexr/3d-tiles-runtime";
 
 const engine = createGeospatialEngine(canvas);
 const scene = createGeospatialScene(engine);
 const camera = createGeospatialCamera(scene, {
-    target: { latitudeDegrees: 48.8566, longitudeDegrees: 2.3522 },
-    radius: 1800,
+  target: { latitudeDegrees: 48.8566, longitudeDegrees: 2.3522 },
+  radius: 1800,
 });
 
 const codec = new TilesetJsonCodec();
 const tilesets: ITilesetLoader = {
-    load: async ({ uri, signal }) => ({ tileset: codec.decode(await (await fetch(uri, { signal })).text()) }),
+  load: async ({ uri, signal }) => ({
+    tileset: codec.decode(await (await fetch(uri, { signal })).text()),
+  }),
 };
 const content = new BabylonGltfTileAdapter(scene);
 const runtime = new TileRuntime({
-    id: "city",
-    uri: "https://example.test/tileset.json",
-    adapter: { tilesets, activation: content, presentation: content, spatial: new EcefSpatialMetric() },
+  id: "city",
+  uri: "https://example.test/tileset.json",
+  adapter: {
+    tilesets,
+    activation: content,
+    presentation: content,
+    spatial: new EcefSpatialMetric(),
+  },
 });
 
 await new BabylonRuntimeDriver(runtime, scene, { camera }).start();
@@ -92,7 +106,7 @@ The Google example needs a Map Tiles API key; see its [README](examples/babylon-
 
 ### Shaders
 
-Shaders live in their own `.glsl` files, in a `shaders` folder beside the code that uses them. Edit those files, never the `.ts` module generated beside each one, then generate the modules:
+Shaders live in their own `.glsl` files, in a `shaders` folder beside the code that uses them, and their WGSL twins for WebGPU in `.wgsl` files of a `shaders/wgsl` folder. Edit those files, never the `.ts` module generated beside each one, then generate the modules:
 
 ```bash
 npm run shaders

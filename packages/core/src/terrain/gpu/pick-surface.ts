@@ -1,5 +1,6 @@
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
+import type { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import type { ITileAddress } from "@spacexr/3d-tiles-runtime";
@@ -29,6 +30,7 @@ export class PickSurface {
         /** Cells per side of each pick grid. */
         cells: number,
         private readonly tiling: Pick<ITerrainTiling, "pickGeometry">,
+        private readonly parent?: TransformNode,
     ) {
         this.verticalScale = verticalScale;
         this.topology = createGridTopology(cells);
@@ -82,6 +84,8 @@ export class PickSurface {
             return Number.isNaN(sampled) ? 0 : sampled * this.verticalScale;
         });
         const mesh = new Mesh(`gpu-terrain-pick-${key(address)}`, this.scene);
+        mesh.parent = this.parent ?? null;
+        mesh.metadata = this.parent?.metadata;
         const data = new VertexData();
         data.positions = positions;
         data.indices = this.topology.indices;

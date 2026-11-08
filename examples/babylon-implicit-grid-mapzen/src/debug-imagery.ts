@@ -12,6 +12,9 @@ const LEVEL_COLORS = [
     "#845ef7",
 ] as const;
 
+// Pixel readback follows every draw, so keep a CPU-backed context and reuse its scratch canvas.
+const contexts = new Map<number, OffscreenCanvasRenderingContext2D>();
+
 /**
  * Imagery tile drawn locally, without network: a checkerboard tinted by level, a border and the tile address.
  *
@@ -22,10 +25,16 @@ export function debugImageryTile(
     address: ITileAddress,
     size = 256,
 ): IRasterGrid<Uint8ClampedArray> {
-    const canvas = new OffscreenCanvas(size, size);
-    const context = canvas.getContext("2d");
-    if (!context)
-        throw new Error("OffscreenCanvas 2D context is not available.");
+    let context = contexts.get(size);
+    if (!context) {
+        const created = new OffscreenCanvas(size, size).getContext("2d", {
+            willReadFrequently: true,
+        });
+        if (!created)
+            throw new Error("OffscreenCanvas 2D context is not available.");
+        context = created;
+        contexts.set(size, context);
+    }
     const color = LEVEL_COLORS[address.lod % LEVEL_COLORS.length]!;
     const cells = 8;
     const cell = size / cells;
