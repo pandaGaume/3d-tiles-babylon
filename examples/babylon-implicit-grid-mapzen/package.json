@@ -20,7 +20,7 @@
         "check": "npm run format && npm run lint && npm run typecheck && npm run build"
     },
     "dependencies": {
-        "@babylonjs/core": "^9.33.1",
+        "@babylonjs/core": "^9.35.0",
         "@babylonjs/loaders": "^9.33.1",
         "@spacexr/3d-tiles-babylon": "0.1.0",
         "@spacexr/3d-tiles-core": "0.1.0",
