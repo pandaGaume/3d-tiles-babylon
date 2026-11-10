@@ -22,7 +22,7 @@
     },
     "dependencies": {
         "@babylonjs/core": "^9.33.1",
-        "@babylonjs/loaders": "^9.33.1",
+        "@babylonjs/loaders": "^9.35.0",
         "@spacexr/3d-tiles-babylon": "0.1.0",
         "@spacexr/3d-tiles-core": "0.1.0",
         "@spacexr/3d-tiles-runtime": "0.1.0",
