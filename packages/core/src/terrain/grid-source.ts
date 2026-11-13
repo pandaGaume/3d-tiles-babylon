@@ -3,7 +3,6 @@ import {
     createCubeImplicitSource,
     createWebMapImplicitSource,
     type ICubeImplicitSource,
-    type ICubeSubtree,
     type ImplicitTilesetDecorator,
     type IImplicitSubtreeGraft,
     type IImplicitTileAddressContext,
@@ -228,14 +227,17 @@ export function createGeodesicGridSource(prepared?: IPreparedHeights, options: I
 
 /** Options of {@link createCubeGridSource}. */
 export interface ICubeGridSourceOptions {
-    /** Deepest level of the grid. */
+    /** Deepest level of the grid anywhere. */
     maxLOD: number;
     /** Cells per tile side, for the geometric error. Defaults to the cells of the grid in {@link TERRAIN_CONFIG}. */
     tileSize?: number;
     /** Prefix of the data source identifiers. Defaults to `cube-grid`. */
     id?: string;
-    /** Subtrees with their own levels, such as the polar caps of the Moon. */
-    subtrees?: readonly ICubeSubtree[];
+    /**
+     * Whether the grid holds a tile, where its depth varies from place to place, as the polar caps of the Moon; without
+     * it, every tile down to `maxLOD`. It must hold the parent of every tile it holds.
+     */
+    isAvailable?: (address: ITileAddress & { face: number }) => boolean;
 }
 
 /** Creates a whole body on the cube index, the quadtrees of its six faces decorated as implicit 3D Tiles. */
@@ -259,7 +261,7 @@ export function createCubeGridSource(
         tileMetadata: metadata,
         contentMetadata: metadata,
         tileSize: options.tileSize ?? TERRAIN_CONFIG.grid.cells,
-        ...(options.subtrees ? { subtrees: options.subtrees } : {}),
+        ...(options.isAvailable ? { isAvailable: options.isAvailable } : {}),
         // Ranges are prepared one level ahead; deeper tiles, such as imagery tiles, use their deepest prepared ancestor.
         ...(prepared
             ? {

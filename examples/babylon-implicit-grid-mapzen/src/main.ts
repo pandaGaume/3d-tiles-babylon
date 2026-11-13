@@ -71,7 +71,7 @@ import {
     datasetHeightAt,
     datasetImageryLoader,
     loadMoonDataset,
-    terrainSubtrees,
+    terrainAvailability,
 } from "./moon-dataset";
 import { debugImageryTile } from "./debug-imagery";
 import {
@@ -177,21 +177,37 @@ async function run(): Promise<void> {
     );
     const scene = createGeospatialScene(engine);
 
-    // `body=moon` shows a whole Moon on the cube index, poles included, with the GPU engine: synthetic, or
-    // from the tile service named by `dataset`.
-    const moon = parameters.get("body") === "moon";
+    // `body` shows a whole body on the cube index, poles included, with the GPU engine: the body of the tile service
+    // named by `dataset`, whatever its reference surface, or with `body=moon` alone a synthetic Moon.
+    const bodyName = parameters.get("body");
+    const moon = bodyName !== null;
     const datasetService = parameters.get("dataset");
+    if (moon && !datasetService && bodyName !== "moon")
+        throw new RangeError(
+            "Without dataset, body must be moon: only the Moon has a synthetic body.",
+        );
     const moonDataset =
         moon && datasetService
             ? await loadMoonDataset(datasetService)
             : undefined;
-    const moonRadius = moonDataset?.radius ?? SYNTHETIC_MOON_RADIUS;
+    const bodyRadii = moonDataset?.radii ?? [
+        SYNTHETIC_MOON_RADIUS,
+        SYNTHETIC_MOON_RADIUS,
+        SYNTHETIC_MOON_RADIUS,
+    ];
+    // On the cube, the spatial metric reads its system for the horizon alone, from the smallest radius: the sphere of
+    // that radius lies below the surface. Tiles, heights and the camera read the three radii of the reference surface.
     const geodeticSystem = moon
-        ? new GeodeticSystem(Ellipsoid.sphere("Moon", moonRadius))
+        ? new GeodeticSystem(
+              Ellipsoid.sphere(
+                  moonDataset?.elevation.dataset.body ?? "Moon",
+                  Math.min(...bodyRadii),
+              ),
+          )
         : GeodeticSystem.WGS84;
     const moonSurface = moon
         ? (moonDataset?.elevation.surface ??
-          new CubeTileSurface(ReferenceSurface.sphere(moonRadius)))
+          new CubeTileSurface(ReferenceSurface.sphere(SYNTHETIC_MOON_RADIUS)))
         : undefined;
     // `grid` sets the cells per side of the terrain grids of the Moon, to compare them. The error of a tile follows them.
     const gridCells = moon
@@ -207,7 +223,6 @@ async function run(): Promise<void> {
         moonDataset?.elevation.dataset.maxLOD ??
         TERRAIN_CONFIG.cube.syntheticDemMaxLOD;
     const levelsBelowDem = Math.log2(TERRAIN_CONFIG.dem.tileCells / gridCells);
-    const moonMaxLOD = moonDemMaxLOD + levelsBelowDem;
     // Deepest level of its DEM anywhere, such as the south polar cap of a dataset.
     const moonDemDeepestLOD =
         moonDataset?.elevation.deepestLOD ?? moonDemMaxLOD;
@@ -275,10 +290,15 @@ async function run(): Promise<void> {
         throw new RangeError(
             "demGeneratedLevels must be an integer from 0 to 8.",
         );
-    // `debug` draws pages locally, `dataset` reads the tile service of the Moon; any other name loads
-    // src/local/<name>.imagery.ts, kept out of the repository.
+    // `debug` draws pages locally, `dataset` reads the imagery of the tile service, the default when it publishes one;
+    // any other name loads src/local/<name>.imagery.ts, kept out of the repository.
     const imagery =
-        parameters.get("imagery") ?? (moonDataset ? "dataset" : "debug");
+        parameters.get("imagery") ??
+        (moonDataset?.imagery ? "dataset" : "debug");
+    if (imagery === "dataset" && !moonDataset?.imagery)
+        throw new RangeError(
+            "imagery=dataset needs a dataset that publishes imagery.json.",
+        );
     // Uniform ambient is an explicit diagnostic comparison; normal terrain lighting stays the default.
     const lighting = parameters.get("lighting") ?? "terrain";
     if (lighting !== "ambient" && lighting !== "terrain")
@@ -328,13 +348,14 @@ async function run(): Promise<void> {
                   verticalScale: () => verticalScale.value,
               }
             : undefined;
+    // The terrain of a dataset goes as deep as its data, place by place; the synthetic Moon is as deep everywhere.
     const source = moonSurface
         ? createCubeGridSource(moonSurface, preparedHeights, {
-              maxLOD: moonMaxLOD,
+              maxLOD: moonDemDeepestLOD + levelsBelowDem,
               tileSize: gridCells,
               ...(moonDataset
                   ? {
-                        subtrees: terrainSubtrees(
+                        isAvailable: terrainAvailability(
                             moonDataset.elevation,
                             levelsBelowDem,
                         ),
@@ -460,7 +481,7 @@ async function run(): Promise<void> {
                 registration: moon ? ("point" as const) : ("area" as const),
                 attribution: "",
             }
-          : imagery === "dataset" && moonDataset
+          : imagery === "dataset" && moonDataset?.imagery
             ? {
                   load: datasetImageryLoader(moonDataset.imagery),
                   maxLOD: moonDataset.imagery.deepestLOD,
@@ -546,7 +567,11 @@ async function run(): Promise<void> {
                 tilesets: {
                     load: async () => ({ tileset: imagerySource.tileset }),
                 },
-                subtrees: new DenseImplicitSubtreeLoader(),
+                // A cube source writes the availability of its tiles; a Web Mercator pyramid is dense.
+                subtrees:
+                    "subtrees" in imagerySource
+                        ? imagerySource.subtrees
+                        : new DenseImplicitSubtreeLoader(),
                 implicitTiles: imagerySource.resolver,
                 spatial: new EcefSpatialMetric(spatialOptions),
                 activation: imageryAdapter,
@@ -677,7 +702,10 @@ async function run(): Promise<void> {
         never
     > = {
         tilesets: { load: async () => ({ tileset: source.tileset }) },
-        subtrees: new DenseImplicitSubtreeLoader(),
+        subtrees:
+            "subtrees" in source
+                ? source.subtrees
+                : new DenseImplicitSubtreeLoader(),
         implicitTiles: source.resolver,
         spatial: new EcefSpatialMetric(spatialOptions),
         activation: terrain,
@@ -900,7 +928,7 @@ async function run(): Promise<void> {
     ]);
     monitor.setStartupMilliseconds(performance.now() - startupStartedAt);
     const coverage = moon
-        ? `${moonDataset ? `${moonDataset.elevation.dataset.body} dataset, DEM LOD 0..${moonDemDeepestLOD},` : "Synthetic Moon"} on the cube index, 6 faces, LOD 0..${moonDemDeepestLOD + moonMaxLOD - moonDemMaxLOD}`
+        ? `${moonDataset ? `${moonDataset.elevation.dataset.body} dataset, DEM LOD 0..${moonDemDeepestLOD},` : "Synthetic Moon"} on the cube index, 6 faces, LOD 0..${moonDemDeepestLOD + levelsBelowDem}`
         : `Global WebMercator coverage, ${source.tileset.root.children?.length ?? 0} roots, LOD ${TILE_METRICS.minLOD}..${TILE_METRICS.maxLOD}`;
     status.textContent = `${coverage} | ${renderer === "webgpu" ? (moon && engineName === "gpu" ? "WebGPU, GLSL converted" : "WebGPU, WGSL") : "WebGL, GLSL"}`;
 

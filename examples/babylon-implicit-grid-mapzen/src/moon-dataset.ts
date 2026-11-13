@@ -15,17 +15,25 @@ import {
 /** Elevation and imagery of a body, from the descriptors of a tile service. */
 export interface IMoonDataset {
     elevation: CelestialTileSource;
-    imagery: CelestialTileSource;
-    /** Radius of the reference sphere, read from the descriptors, in metres. */
-    radius: number;
+    /** Imagery of the body, absent when the service publishes none. */
+    imagery?: CelestialTileSource;
+    /** Radii `a`, `b`, `c` of the reference surface, read from the descriptors, in metres. */
+    radii: readonly [number, number, number];
 }
 
+/**
+ * Reads the descriptor `name.json` of a tile service.
+ *
+ * @param optional - Whether a missing descriptor, answered 404, reads as absent.
+ */
 async function loadSource(
     service: string,
     name: string,
-): Promise<CelestialTileSource> {
+    optional = false,
+): Promise<CelestialTileSource | undefined> {
     const url = new URL(`${name}.json`, `${service.replace(/\/+$/, "")}/`);
     const response = await fetch(url);
+    if (optional && response.status === 404) return undefined;
     if (!response.ok)
         throw new Error(`${url.href} answered ${response.status}.`);
     const descriptor = (await response.json()) as Record<string, unknown>;
@@ -40,59 +48,51 @@ async function loadSource(
 }
 
 /**
- * Reads `elevation.json` and `imagery.json` of a tile service. Their URL templates carry the revision of the dataset, so
- * the descriptors are read at each start and tile URLs are never built by hand.
+ * Reads `elevation.json` and, when the service publishes one, `imagery.json` of a tile service. Their URL templates
+ * carry the revision of the dataset, so the descriptors are read at each start and tile URLs are never built by hand.
+ * Any reference surface is accepted, a triaxial one included: heights are radial, along the direction from the centre.
  *
- * @throws RangeError When a descriptor holds other content, or when the two do not describe the same sphere.
+ * @throws RangeError When a descriptor holds other content, or when the two do not describe the same surface.
  */
 export async function loadMoonDataset(service: string): Promise<IMoonDataset> {
     const [elevation, imagery] = await Promise.all([
         loadSource(service, "elevation"),
-        loadSource(service, "imagery"),
+        loadSource(service, "imagery", true),
     ]);
-    if (elevation.dataset.content !== "elevation")
+    if (elevation!.dataset.content !== "elevation")
         throw new RangeError("elevation.json does not hold elevation.");
-    if (imagery.dataset.content !== "imagery")
+    if (imagery && imagery.dataset.content !== "imagery")
         throw new RangeError("imagery.json does not hold imagery.");
-    const [a, b, c] = elevation.dataset.referenceRadii;
-    // The spatial metric of the runtime takes an ellipsoid of two axes.
-    if (a !== b || b !== c)
-        throw new RangeError("This example renders spherical bodies only.");
-    if (imagery.dataset.referenceRadii.some((radius) => radius !== a))
+    const radii = elevation!.dataset.referenceRadii;
+    if (
+        imagery &&
+        imagery.dataset.referenceRadii.some(
+            (radius, axis) => radius !== radii[axis],
+        )
+    )
         throw new RangeError(
             "The elevation and imagery of a dataset must share their reference surface.",
         );
-    return { elevation, imagery, radius: a };
+    return {
+        elevation: elevation!,
+        ...(imagery ? { imagery } : {}),
+        radii: [radii[0], radii[1], radii[2]],
+    };
 }
 
 /**
- * Terrain subtrees following the subtrees of a dataset: the terrain refines further only where the data does.
+ * Terrain tiles following the depth of a dataset: a terrain tile exists where the data reaches, somewhere within it, the
+ * DEM level its cells sample. The terrain refines further only where the data does, wherever a deeper region starts.
  *
  * @param source - Elevation of the dataset.
  * @param levelsBelowDem - Levels of terrain tiles below a DEM tile until their cells reach its samples.
  */
-export function terrainSubtrees(
+export function terrainAvailability(
     source: CelestialTileSource,
     levelsBelowDem: number,
-): { root: ITileAddress & { face: number }; maxLOD: number }[] {
-    const { subtrees } = source.dataset;
-    const declared = new Set(
-        subtrees.map(({ face, lod, x, y }) => `${face}/${lod}/${x}/${y}`),
-    );
-    return (
-        subtrees
-            // The outermost tiles, whose parents the subtrees do not declare.
-            .filter(
-                ({ face, lod, x, y }) =>
-                    !declared.has(
-                        `${face}/${lod - 1}/${Math.floor(x / 2)}/${Math.floor(y / 2)}`,
-                    ),
-            )
-            .map(({ face, lod, x, y }) => ({
-                root: { face, lod, x, y },
-                maxLOD: source.deepestLOD + levelsBelowDem,
-            }))
-    );
+): (address: ITileAddress & { face: number }) => boolean {
+    return (address) =>
+        address.lod <= levelsBelowDem + source.deepestLevelWithin(address);
 }
 
 /** Loads the imagery tiles of a dataset, which hold their shared edges. */
