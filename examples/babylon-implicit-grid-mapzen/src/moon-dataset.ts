@@ -80,21 +80,6 @@ export async function loadMoonDataset(service: string): Promise<IMoonDataset> {
     };
 }
 
-/**
- * Terrain tiles following the depth of a dataset: a terrain tile exists where the data reaches, somewhere within it, the
- * DEM level its cells sample. The terrain refines further only where the data does, wherever a deeper region starts.
- *
- * @param source - Elevation of the dataset.
- * @param levelsBelowDem - Levels of terrain tiles below a DEM tile until their cells reach its samples.
- */
-export function terrainAvailability(
-    source: CelestialTileSource,
-    levelsBelowDem: number,
-): (address: ITileAddress & { face: number }) => boolean {
-    return (address) =>
-        address.lod <= levelsBelowDem + source.deepestLevelWithin(address);
-}
-
 /** Loads the imagery tiles of a dataset, which hold their shared edges. */
 export function datasetImageryLoader(
     source: CelestialTileSource,

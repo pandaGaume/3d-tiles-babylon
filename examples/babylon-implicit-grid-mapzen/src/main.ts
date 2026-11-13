@@ -71,7 +71,6 @@ import {
     datasetHeightAt,
     datasetImageryLoader,
     loadMoonDataset,
-    terrainAvailability,
 } from "./moon-dataset";
 import { debugImageryTile } from "./debug-imagery";
 import {
@@ -348,19 +347,12 @@ async function run(): Promise<void> {
                   verticalScale: () => verticalScale.value,
               }
             : undefined;
-    // The terrain of a dataset goes as deep as its data, place by place; the synthetic Moon is as deep everywhere.
+    // The grid goes as deep as the data anywhere, on every face: a tile finer than the data at its place reads a
+    // sub-area of the deepest DEM tile there, so that neighbours always connect, as on Web Mercator.
     const source = moonSurface
         ? createCubeGridSource(moonSurface, preparedHeights, {
               maxLOD: moonDemDeepestLOD + levelsBelowDem,
               tileSize: gridCells,
-              ...(moonDataset
-                  ? {
-                        isAvailable: terrainAvailability(
-                            moonDataset.elevation,
-                            levelsBelowDem,
-                        ),
-                    }
-                  : {}),
           })
         : createGeodesicGridSource(preparedHeights, { subtrees });
     if (dem)
@@ -567,11 +559,7 @@ async function run(): Promise<void> {
                 tilesets: {
                     load: async () => ({ tileset: imagerySource.tileset }),
                 },
-                // A cube source writes the availability of its tiles; a Web Mercator pyramid is dense.
-                subtrees:
-                    "subtrees" in imagerySource
-                        ? imagerySource.subtrees
-                        : new DenseImplicitSubtreeLoader(),
+                subtrees: new DenseImplicitSubtreeLoader(),
                 implicitTiles: imagerySource.resolver,
                 spatial: new EcefSpatialMetric(spatialOptions),
                 activation: imageryAdapter,
@@ -702,10 +690,7 @@ async function run(): Promise<void> {
         never
     > = {
         tilesets: { load: async () => ({ tileset: source.tileset }) },
-        subtrees:
-            "subtrees" in source
-                ? source.subtrees
-                : new DenseImplicitSubtreeLoader(),
+        subtrees: new DenseImplicitSubtreeLoader(),
         implicitTiles: source.resolver,
         spatial: new EcefSpatialMetric(spatialOptions),
         activation: terrain,
