@@ -28,7 +28,15 @@ async function loadSource(
     const response = await fetch(url);
     if (!response.ok)
         throw new Error(`${url.href} answered ${response.status}.`);
-    return new CelestialTileSource(await response.json());
+    const descriptor = (await response.json()) as Record<string, unknown>;
+    // A relative template resolves against its descriptor, as a relative URI of 3D Tiles resolves against its tileset:
+    // a static bucket serves templates such as `./elevation/{face}/{z}/{x}/{y}.png`.
+    const tiles = descriptor.tiles;
+    if (typeof tiles === "string" && !/^[a-z][a-z\d+.-]*:/i.test(tiles))
+        descriptor.tiles = new URL(tiles, url).href
+            .replace(/%7B/gi, "{")
+            .replace(/%7D/gi, "}");
+    return new CelestialTileSource(descriptor);
 }
 
 /**
