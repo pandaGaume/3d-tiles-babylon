@@ -81,6 +81,52 @@ import {
 } from "./synthetic-moon";
 import { loadLocalImagery } from "./local-imagery";
 import { clearMonitorPanel, renderMonitorPanel } from "./monitor-panel";
+import places from "./places.json";
+
+interface IPlace {
+    latitude: number;
+    longitude: number;
+    /** Height of the point the camera orbits, in metres. */
+    height: number;
+}
+
+/**
+ * The point the camera orbits on Web Mercator. `place` names an entry of places.json, `mont-blanc` by default. `lat`
+ * and `lon`, in degrees, give any other point instead, at `height` metres, 0 by default.
+ */
+function cameraTarget(parameters: URLSearchParams): IPlace {
+    const latitude = parameters.get("lat");
+    const longitude = parameters.get("lon");
+    if (latitude !== null || longitude !== null) {
+        const point = {
+            latitude: Number(latitude),
+            longitude: Number(longitude),
+            height: Number(parameters.get("height") ?? "0"),
+        };
+        if (
+            latitude === null ||
+            longitude === null ||
+            !Object.values(point).every(Number.isFinite) ||
+            Math.abs(point.latitude) > 90 ||
+            Math.abs(point.longitude) > 180
+        )
+            throw new RangeError(
+                "lat and lon must both be given, in degrees, and height in metres.",
+            );
+        return point;
+    }
+    const name = parameters.get("place") ?? "mont-blanc";
+    const place = (places as Record<string, IPlace | undefined>)[name];
+    if (!place)
+        throw new RangeError(
+            `place must be one of ${Object.keys(places).join(", ")}.`,
+        );
+    return {
+        latitude: place.latitude,
+        longitude: place.longitude,
+        height: Number(parameters.get("height") ?? place.height),
+    };
+}
 
 function requiredElement<TElement extends HTMLElement>(
     id: string,
@@ -120,10 +166,14 @@ async function run(): Promise<void> {
     };
     const tileLabels = requiredElement("tile-labels", HTMLDivElement);
     const parameters = new URLSearchParams(window.location.search);
-    // `renderer=webgpu` runs the GLSL shaders, converted by Babylon, on its WebGPU engine where the browser supports it, WebGL otherwise.
+    // `renderer=webgpu` runs the WGSL shaders on the WebGPU engine of Babylon where the browser supports it, WebGL and GLSL
+    // otherwise. The GPU terrain of the cube has no WGSL shaders yet: on WebGPU, Babylon converts its GLSL ones.
+    // `antialias=0` removes multisampling, whose resolved edges depend on the hardware and the graphics API.
+    const antialias = parameters.get("antialias") !== "0";
     const { engine, renderer } = await createGeospatialRendererEngine(
         canvas,
         parameters.get("renderer") === "webgpu" ? "webgpu" : "webgl",
+        { webgl: { antialias }, webgpu: { antialias } },
     );
     const scene = createGeospatialScene(engine);
 
@@ -318,19 +368,14 @@ async function run(): Promise<void> {
             ? datasetHeightAt(moonPyramid, moonDemDeepestLOD)
             : syntheticMoonHeight;
 
-    // Mont Blanc summit, 4808 m.
-    const montBlanc = {
-        latitude: 45.832622,
-        longitude: 6.865175,
-        height: 4808,
-    };
+    // On Web Mercator, the camera orbits a place of places.json, or the point `lat` and `lon` give, at `height` metres.
     const target = moon
         ? {
               latitude: Number(parameters.get("lat") ?? "-85"),
               longitude: Number(parameters.get("lon") ?? "20"),
               height: 0,
           }
-        : montBlanc;
+        : cameraTarget(parameters);
     const pitchRadians =
         (Number(parameters.get("pitch") ?? "60") * Math.PI) / 180;
     const orbitRadius = Number(
@@ -801,19 +846,19 @@ async function run(): Promise<void> {
         console.error("3D Tiles pipeline error", event.error);
     });
 
-    // Mercator selects the real view and preloads replacement fronts. The cube keeps its existing periphery.
-    const frustum = moon
-        ? {
-              frustumMargin: Number(
-                  parameters.get("frustumMargin") ??
-                      TERRAIN_CONFIG.selection.frustumMargin,
-              ),
-          }
-        : {};
+    // Mercator selects the real view, and loads its periphery without drawing it. The cube keeps its existing periphery,
+    // for its imagery and objects too.
+    const periphery = {
+        frustumMargin: Number(
+            parameters.get("frustumMargin") ??
+                TERRAIN_CONFIG.selection.frustumMargin,
+        ),
+    };
+    const frustum = moon ? periphery : {};
     const driver = new BabylonRuntimeDriver(runtime, scene, {
         camera,
         manual: !moon,
-        ...frustum,
+        ...periphery,
         ...(motionScale
             ? {
                   motion: {
@@ -857,7 +902,7 @@ async function run(): Promise<void> {
     const coverage = moon
         ? `${moonDataset ? `${moonDataset.elevation.dataset.body} dataset, DEM LOD 0..${moonDemDeepestLOD},` : "Synthetic Moon"} on the cube index, 6 faces, LOD 0..${moonDemDeepestLOD + moonMaxLOD - moonDemMaxLOD}`
         : `Global WebMercator coverage, ${source.tileset.root.children?.length ?? 0} roots, LOD ${TILE_METRICS.minLOD}..${TILE_METRICS.maxLOD}`;
-    status.textContent = `${coverage} | ${renderer === "webgpu" ? "GLSL converted for WebGPU" : "WebGL"}`;
+    status.textContent = `${coverage} | ${renderer === "webgpu" ? (moon && engineName === "gpu" ? "WebGPU, GLSL converted" : "WebGPU, WGSL") : "WebGL, GLSL"}`;
 
     // Objects of the example, for probes run from the browser console.
     (window as unknown as Record<string, unknown>).__SPACEXR_EXAMPLE__ = {
@@ -894,28 +939,28 @@ async function run(): Promise<void> {
     } else {
         // The selection and its junctions are published before drawing this camera. Network work stays asynchronous.
         scene.onBeforeRenderObservable.add(() => terrain.beforeRender());
-        let rendering = false;
-        engine.runRenderLoop(() => {
-            if (rendering || scene.isDisposed) return;
-            rendering = true;
+        // Each frame waits for the selection of its camera, then draws inside a frame of the engine, which submits it:
+        // WebGPU only presents the canvas texture of a frame whose commands were submitted.
+        const frame = async (): Promise<void> => {
+            if (scene.isDisposed) return;
             camera.update();
-            void Promise.all([
-                driver.updateBeforeRender(),
-                imageryDriver?.updateBeforeRender(),
-            ])
-                .then(() => {
-                    if (scene.isDisposed) return;
-                    scene.render(false);
-                    monitor.update();
-                    terrain.afterRender();
-                })
-                .catch((error: unknown) =>
-                    console.error("Mercator frame failed", error),
-                )
-                .finally(() => {
-                    rendering = false;
-                });
-        });
+            try {
+                await Promise.all([
+                    driver.updateBeforeRender(),
+                    imageryDriver?.updateBeforeRender(),
+                ]);
+                if (scene.isDisposed) return;
+                engine.beginFrame();
+                scene.render(false);
+                engine.endFrame();
+                monitor.update();
+                terrain.afterRender();
+            } catch (error: unknown) {
+                console.error("Mercator frame failed", error);
+            }
+            requestAnimationFrame(() => void frame());
+        };
+        requestAnimationFrame(() => void frame());
     }
 
     const resize = (): void => engine.resize();

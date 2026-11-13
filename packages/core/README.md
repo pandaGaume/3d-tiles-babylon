@@ -58,11 +58,11 @@ const content = new BabylonGltfTileAdapter(scene, {
 
 ## Renderer status
 
-**This package renders with WebGL. Every shader is written in GLSL, and none is written for WebGPU.** Running on the WebGPU engine of Babylon.js only checks that those shaders survive its conversion to WGSL: it is not a WebGPU implementation, and it brings no WebGPU technique such as storage buffers or compute shaders.
+**The adapter renders with WebGL from its GLSL shaders, and with WebGPU from WGSL shaders written for it; the two are compared pixel by pixel with `npm run compare:renderers`.** It brings no technique proper to WebGPU, such as storage buffers or compute shaders.
 
 `createGeospatialRendererEngine(canvas, "webgpu")` creates that engine where the browser supports WebGPU and a WebGL engine otherwise, and reports which one it created. Support is checked before the canvas is bound, since a canvas holding a WebGPU context can no longer hold a WebGL one. The WebGPU engine requests the maximum limits of the adapter: WebGPU only guarantees 256 texture array layers.
 
-On that engine, Babylon converts the GLSL shaders to WGSL with its glslang and twgsl compilers, downloaded from the Babylon.js CDN on first use. glTF content, the geospatial camera, large world rendering, picking, the runtime, imagery draping and both terrain engines run through this conversion. The code of this package specific to that engine only creates it, writes and copies texture array layers, and registers its frame timing. `TextureArrayPool` writes single layers with `texSubImage3D` on WebGL 2 and with Babylon's texture helper on WebGPU, where growing the array also copies float layers. Materials carrying the GLSL drape plugin are created with `forceGLSL`, so that Babylon converts them as a whole on WebGPU. The GPU terrain engine interleaves its instance attributes in one vertex buffer: WebGPU devices may bind only 8 vertex buffers to a pipeline.
+On that engine, the GPU terrain engine and the imagery drape of the mesh engine run their WGSL shaders, except the GPU terrain of a tiling with radial heights, such as the cube, whose GLSL shaders Babylon converts, the twins of their GLSL shaders under `shaders/wgsl`, which compute the same values in the same order. The materials of Babylon.js, such as the standard material of the mesh engine, run the WGSL of Babylon.js. The code of this package specific to that engine creates it, selects the WGSL shaders, writes and copies texture array layers, and registers its frame timing. `TextureArrayPool` writes single layers with `texSubImage3D` on WebGL 2 and with Babylon's texture helper on WebGPU, where growing the array also copies float layers. The GPU terrain engine interleaves its instance attributes in one vertex buffer: WebGPU devices may bind only 8 vertex buffers to a pipeline.
 
 ```ts
 const { engine, renderer } = await createGeospatialRendererEngine(canvas, "webgpu");
@@ -118,7 +118,7 @@ GPU frame time requires GPU timer queries. The monitor registers the time query 
 
 ## Whole bodies
 
-`GpuTerrainEngine` renders any tiling. `ITerrainTiling` tells it where tiles lie and how they connect: `webMercatorTiling` by default, `cubeTiling` for a whole body on the cube index, poles included. `createCubeGridSource` builds the implicit quadtrees of the six faces. On the cube, heights are radial, the DEM of a tile on another face is read turned, and normals are computed at each pixel from the DEM. Babylon's `GeospatialCamera` keeps its centre about 2.87 degrees away from the poles and measures its yaw from the north. `OrbitalCamera` has no north in its state, so it can centre on a pole and cross it: drag to pan, drag with the right or middle button or with Ctrl to turn and tilt, use the wheel or a pinch to zoom, two fingers to turn, the arrow keys to pan, `+` and `-` to zoom, `Q` and `E` to turn, `Page Up` and `Page Down` to tilt. `MeshTerrainEngine` renders Web Mercator only.
+`GpuTerrainEngine` renders any tiling. `ITerrainTiling` tells it where tiles lie and how they connect: `webMercatorTiling` by default, `cubeTiling` for a whole body on the cube index, poles included. `createCubeGridSource` builds the implicit quadtrees of the six faces. On the cube, heights are radial, the DEM of a tile on another face is read turned, and normals are computed at each pixel from the DEM. `MeshTerrainEngine` renders Web Mercator only.
 
 ```ts
 import { createCubeGridSource, cubeTiling, GpuTerrainEngine } from "@spacexr/3d-tiles-babylon";
@@ -132,6 +132,10 @@ const terrain = new GpuTerrainEngine({ ...inputs, tiling: cubeTiling(surface) })
 ```
 
 Elevation and imagery tiles hold their shared edges: pyramids take `registration: "point"`. See `docs/celestial-tiling.md` of 3d-tiles-core.
+
+## Cameras
+
+Babylon's `GeospatialCamera` keeps its centre about 2.87 degrees away from the poles and measures its yaw from the north. `OrbitalCamera` has no north in its state, so it can centre on a pole and cross it: drag to pan, drag with the right or middle button or with Ctrl to turn and tilt, use the wheel or a pinch to zoom, two fingers to turn, the arrow keys to pan, `+` and `-` to zoom, `Q` and `E` to turn, `Page Up` and `Page Down` to tilt.
 
 ## License
 

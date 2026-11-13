@@ -11,12 +11,6 @@ window.__TERRAIN_BENCH__ = (() => {
             if (camera.frame) camera.frame.rotateHeading(path.turn * dt);
             else camera.yaw = (camera.yaw ?? 0) + path.turn * dt;
         }
-        if (path.sway) {
-            const { amplitude, rate } = path.sway;
-            const turn = amplitude * (Math.sin(rate * t) - Math.sin(rate * (t - dt)));
-            if (camera.frame) camera.frame.rotateHeading(turn);
-            else camera.yaw = (camera.yaw ?? 0) + turn;
-        }
         if (path.zoom) {
             const { nearest, farthest, rate } = path.zoom;
             const span = Math.log(farthest / nearest);
@@ -346,23 +340,11 @@ window.__TERRAIN_BENCH__ = (() => {
         const pages = new Map();
         for (const page of terrain.elevations.pages.values())
             pages.set(page.layer, terrain.elevation?.pyramid.rasters.stitchedGrid(page.address));
-        const attribute = (name) => terrain.grid.attribute(name);
-        const references = {};
-        for (const name of [
-            "instElevation",
-            "instEdgeN",
-            "instEdgeE",
-            "instEdgeS",
-            "instEdgeW",
-            "instCornerNW",
-            "instCornerNE",
-            "instCornerSE",
-            "instCornerSW",
-        ])
-            references[name] = attribute(name);
+        // Instances are spread over one grid per junction topology: each reads its own grid, at its own index.
         const reference = (name, index) => {
-            const a = references[name];
-            return [a[index * 4], a[index * 4 + 1], a[index * 4 + 2], a[index * 4 + 3]];
+            const { grid, gridIndex } = terrain.placed[index];
+            const a = grid.attribute(name);
+            return [a[gridIndex * 4], a[gridIndex * 4 + 1], a[gridIndex * 4 + 2], a[gridIndex * 4 + 3]];
         };
         const elevationAt = (index, hx, hy) => {
             const north = hy === 0;

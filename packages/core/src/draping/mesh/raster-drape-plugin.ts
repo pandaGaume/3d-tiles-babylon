@@ -14,6 +14,11 @@ import { rasterDrapeFragmentUpdateDiffuse } from "./shaders/snippets/rasterDrape
 import { rasterDrapeUniforms } from "./shaders/snippets/rasterDrapeUniforms";
 import { rasterDrapeVertexDefinitions } from "./shaders/snippets/rasterDrapeVertexDefinitions";
 import { rasterDrapeVertexMainEnd } from "./shaders/snippets/rasterDrapeVertexMainEnd";
+import { rasterDrapeFragmentDefinitionsWGSL } from "./shaders/wgsl/snippets/rasterDrapeFragmentDefinitions";
+import { rasterDrapeFragmentUpdateDiffuseWGSL } from "./shaders/wgsl/snippets/rasterDrapeFragmentUpdateDiffuse";
+import { rasterDrapeUniformsWGSL } from "./shaders/wgsl/snippets/rasterDrapeUniforms";
+import { rasterDrapeVertexDefinitionsWGSL } from "./shaders/wgsl/snippets/rasterDrapeVertexDefinitions";
+import { rasterDrapeVertexMainEndWGSL } from "./shaders/wgsl/snippets/rasterDrapeVertexMainEnd";
 
 /** Binding of one mesh: its drape depth and the layer of its cell table, `-1` without table. */
 export interface IMeshRasterDrape {
@@ -72,12 +77,12 @@ export class RasterDrapeMaterialPlugin extends MaterialPluginBase {
         this.markAllDefinesAsDirty();
     }
 
-    /**
-     * The drape is written in GLSL, kept for the browsers without WebGPU: on WebGPU, its material must use GLSL
-     * (`forceGLSL`), which Babylon converts to WGSL. Texture arrays need WebGL 2 or WebGPU.
-     */
-    public override isCompatible(shaderLanguage: ShaderLanguage = ShaderLanguage.GLSL): boolean {
-        return shaderLanguage === ShaderLanguage.GLSL && this._material.getScene().getEngine().getCaps().texture2DArrayMaxLayerCount > 0;
+    /** The drape is written in GLSL for WebGL and in WGSL for WebGPU. Texture arrays need WebGL 2 or WebGPU. */
+    public override isCompatible(shaderLanguage: ShaderLanguage): boolean {
+        return (
+            (shaderLanguage === ShaderLanguage.GLSL || shaderLanguage === ShaderLanguage.WGSL) &&
+            this._material.getScene().getEngine().getCaps().texture2DArrayMaxLayerCount > 0
+        );
     }
 
     public override prepareDefinesBeforeAttributes(defines: MaterialDefines): void {
@@ -90,10 +95,13 @@ export class RasterDrapeMaterialPlugin extends MaterialPluginBase {
         samplers.push("drapePages", "drapeTables");
     }
 
-    public override getUniforms(): { ubo: { name: string; size: number; type: string }[]; fragment: string } {
+    public override getUniforms(shaderLanguage: ShaderLanguage = ShaderLanguage.GLSL): {
+        ubo: { name: string; size: number; type: string }[];
+        fragment: string;
+    } {
         return {
             ubo: [{ name: "drapeInfo", size: 4, type: "vec4" }],
-            fragment: rasterDrapeUniforms.shader,
+            fragment: (shaderLanguage === ShaderLanguage.WGSL ? rasterDrapeUniformsWGSL : rasterDrapeUniforms).shader,
         };
     }
 
@@ -106,16 +114,17 @@ export class RasterDrapeMaterialPlugin extends MaterialPluginBase {
         this.bindDrape(uniformBuffer, subMesh);
     }
 
-    public override getCustomCode(shaderType: string): Record<string, string> | null {
+    public override getCustomCode(shaderType: string, shaderLanguage: ShaderLanguage = ShaderLanguage.GLSL): Record<string, string> | null {
+        const wgsl = shaderLanguage === ShaderLanguage.WGSL;
         if (shaderType === "vertex")
             return {
-                CUSTOM_VERTEX_DEFINITIONS: rasterDrapeVertexDefinitions.shader,
-                CUSTOM_VERTEX_MAIN_END: rasterDrapeVertexMainEnd.shader,
+                CUSTOM_VERTEX_DEFINITIONS: (wgsl ? rasterDrapeVertexDefinitionsWGSL : rasterDrapeVertexDefinitions).shader,
+                CUSTOM_VERTEX_MAIN_END: (wgsl ? rasterDrapeVertexMainEndWGSL : rasterDrapeVertexMainEnd).shader,
             };
         if (shaderType === "fragment")
             return {
-                CUSTOM_FRAGMENT_DEFINITIONS: rasterDrapeFragmentDefinitions.shader,
-                CUSTOM_FRAGMENT_UPDATE_DIFFUSE: rasterDrapeFragmentUpdateDiffuse.shader,
+                CUSTOM_FRAGMENT_DEFINITIONS: (wgsl ? rasterDrapeFragmentDefinitionsWGSL : rasterDrapeFragmentDefinitions).shader,
+                CUSTOM_FRAGMENT_UPDATE_DIFFUSE: (wgsl ? rasterDrapeFragmentUpdateDiffuseWGSL : rasterDrapeFragmentUpdateDiffuse).shader,
             };
         return null;
     }
