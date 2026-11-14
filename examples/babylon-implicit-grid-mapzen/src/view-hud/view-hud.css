@@ -1,0 +1,106 @@
+.sxr-view-hud {
+  --sxr-view-hud-accent: #43a5ff;
+  --sxr-view-hud-text: #d8ecff;
+
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #1976d2;
+  border-radius: 8px;
+  color: var(--sxr-view-hud-text);
+  background: rgb(3 18 39 / 88%);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 35%);
+  font:
+    12px/1.35 Inter,
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.sxr-view-hud__top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sxr-view-hud__compass {
+  position: relative;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--sxr-view-hud-accent);
+  border-radius: 50%;
+}
+
+.sxr-view-hud__needle {
+  position: absolute;
+  inset: 0;
+}
+
+.sxr-view-hud__needle::before {
+  position: absolute;
+  top: 8px;
+  left: calc(50% - 4px);
+  border-right: 4px solid transparent;
+  border-bottom: 16px solid #ff5a4f;
+  border-left: 4px solid transparent;
+  content: "";
+}
+
+.sxr-view-hud__needle::after {
+  position: absolute;
+  bottom: 8px;
+  left: calc(50% - 4px);
+  border-top: 16px solid var(--sxr-view-hud-text);
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  content: "";
+}
+
+.sxr-view-hud__north {
+  position: absolute;
+  top: -15px;
+  left: 0;
+  width: 100%;
+  color: #ff5a4f;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.sxr-view-hud__readouts {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 1px 8px;
+  margin: 0;
+}
+
+.sxr-view-hud__readouts dt {
+  color: var(--sxr-view-hud-accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sxr-view-hud__readouts dd {
+  margin: 0;
+  text-align: right;
+}
+
+.sxr-view-hud__scale {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.sxr-view-hud__bar {
+  height: 6px;
+  border: 2px solid var(--sxr-view-hud-text);
+  border-top: none;
+}

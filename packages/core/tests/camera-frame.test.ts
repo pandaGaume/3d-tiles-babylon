@@ -47,6 +47,13 @@ describe("createEcefCameraFrame", () => {
         expect(inside(planes, 1.3 * half, 1000)).toBe(false);
     });
 
+    it("gives the unit direction of the view", () => {
+        const forward = frame().forward!;
+        expect(forward.x).toBeCloseTo(0, 12);
+        expect(forward.y).toBeCloseTo(0, 12);
+        expect(forward.z).toBeCloseTo(1, 12);
+    });
+
     it("has no periphery without a margin", () => {
         expect(frame().peripheryFrustumPlanes).toBeUndefined();
         expect(frame(0).peripheryFrustumPlanes).toBeUndefined();

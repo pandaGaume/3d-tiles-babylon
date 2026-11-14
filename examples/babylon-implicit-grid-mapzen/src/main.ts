@@ -28,6 +28,7 @@ import {
     type IBabylonRasterPage,
     createGeospatialRendererEngine,
     createGeospatialScene,
+    createEcefCameraFrame,
 } from "@spacexr/3d-tiles-babylon";
 import {
     DenseImplicitSubtreeLoader,
@@ -35,6 +36,8 @@ import {
     TileRuntime,
     VerticalScale,
     radialVerticalFrame,
+    geodeticVerticalFrame,
+    describeView,
     WebMercatorTileMetrics,
     type IEcefCameraFrame,
     type ITileAddress,
@@ -80,6 +83,7 @@ import {
 } from "./synthetic-moon";
 import { loadLocalImagery } from "./local-imagery";
 import { clearMonitorPanel, renderMonitorPanel } from "./monitor-panel";
+import { ViewHud } from "./view-hud/view-hud";
 import places from "./places.json";
 
 interface IPlace {
@@ -683,6 +687,7 @@ async function run(): Promise<void> {
         verticalScaleValue.value = `x${verticalScale.value}`;
     });
 
+    const terrainSpatial = new EcefSpatialMetric(spatialOptions);
     const adapter: IRuntimeAdapter<
         IEcefCameraFrame,
         IEcefSpatialState,
@@ -692,7 +697,7 @@ async function run(): Promise<void> {
         tilesets: { load: async () => ({ tileset: source.tileset }) },
         subtrees: new DenseImplicitSubtreeLoader(),
         implicitTiles: source.resolver,
-        spatial: new EcefSpatialMetric(spatialOptions),
+        spatial: terrainSpatial,
         activation: terrain,
         presentation: terrain,
     };
@@ -942,6 +947,41 @@ async function run(): Promise<void> {
         scene,
     };
 
+    // Scale and altitude of the view, from the runtime. `hud=0` hides them.
+    const viewHud =
+        parameters.get("hud") === "0" ? undefined : new ViewHud(document.body);
+    if (viewHud) {
+        const vertical = moonSurface
+            ? radialVerticalFrame(moonSurface.reference)
+            : geodeticVerticalFrame(geodeticSystem);
+        scene.onAfterRenderObservable.add(() => {
+            const frame = createEcefCameraFrame(camera, engine);
+            const { x, y, z } = frame.position;
+            const length = Math.hypot(x, y, z) || 1;
+            // The drawn terrain below the camera, where its DEM is loaded: on the cube only, for now.
+            const ground =
+                moonSurface && elevationEnabled
+                    ? moonHeight({
+                          x: x / length,
+                          y: y / length,
+                          z: z / length,
+                      }) * verticalScale.value
+                    : undefined;
+            const view = describeView(frame, {
+                vertical,
+                fallback: terrainSpatial.projectionFallback,
+                ...(ground !== undefined ? { groundHeight: ground } : {}),
+                // The orbited point is at the centre of the view.
+                targetDistance:
+                    "frame" in camera ? camera.frame.radius : camera.radius,
+            });
+            viewHud.update(
+                view,
+                frame.viewportHeight / (canvas.clientHeight || 1),
+            );
+        });
+    }
+
     if (moon) {
         engine.runRenderLoop(() => {
             terrain.beforeRender();
@@ -995,6 +1035,7 @@ async function run(): Promise<void> {
             imageryPages?.dispose();
             normalPages?.dispose();
             monitor.dispose();
+            viewHud?.dispose();
             scene.dispose();
             engine.dispose();
         },
